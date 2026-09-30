@@ -562,6 +562,47 @@ async def publish_do(callback: CallbackQuery, session, state: FSMContext):
 
 # ── إنشاء تلقائي ──
 
+@router.callback_query(F.data == "admin:store_flush")
+async def store_flush_ask(callback: CallbackQuery, session):
+    from sqlalchemy import func as _func
+
+    from database.models import Category as _Cat, Product as _Prod
+
+    cats = int((await session.execute(select(_func.count(_Cat.id)))).scalar_one() or 0)
+    prods = int((await session.execute(select(_func.count(_Prod.id)))).scalar_one() or 0)
+    await callback.message.edit_text(
+        "🧹 <b>تفريغ المتجر</b>\n\n"
+        f"سيحذف: <b>{cats} قسماً</b> بفروعها + <b>{prods} منتجاً</b>.\n"
+        "• الأرقام لا تُمس أبداً.\n"
+        "• المزودون وخدماتهم المسحوبة تبقى (سحب جديد بعد التفريغ).\n"
+        "• لا رجوع بعد الحذف!\n\n"
+        "متأكد؟",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🧹 نعم، فرّغ كلشي", callback_data="admin:store_flush_go", style="danger")],
+            [InlineKeyboardButton(text="❌ تراجع", callback_data="admin:main")],
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:store_flush_go")
+async def store_flush_go(callback: CallbackQuery, session):
+    from services.store_sync_service import flush_store
+
+    await callback.answer("⏳ جاري التفريغ...")
+    stats = await flush_store(session)
+    await callback.message.edit_text(
+        "✅ <b>تم التفريغ!</b>\n\n"
+        f"🗑 أقسام محذوفة: <b>{stats['cats']}</b>\n"
+        f"🗑 منتجات محذوفة: <b>{stats['products']}</b>\n\n"
+        "الخطوة التالية: مزامنة المزودين ثم أزرار التجهيز الأربعة لسحب نظيف.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔌 مزودو المتجر", callback_data="admin:store_providers", style="success")],
+            [InlineKeyboardButton(text="🔙 لوحة الإدارة", callback_data="admin:main")],
+        ]),
+    )
+
+
 @router.callback_query(F.data == "admin:store_autotree")
 async def autotree_home(callback: CallbackQuery, session):
     providers = await DynamicService.get_all_providers(session)

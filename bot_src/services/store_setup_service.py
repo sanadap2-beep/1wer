@@ -33,7 +33,7 @@ from services.store_sync_service import (
 SECTION_TYPES: dict[str, tuple[str, tuple[CategoryType, ...]]] = {
     "games": ("🎮 شحن الألعاب", (CategoryType.GAMES,)),
     "apps": ("📱 شحن التطبيقات", (CategoryType.APPS,)),
-    "balances": ("💳 الرصيد", (CategoryType.BALANCES,)),
+    "balances": ("💳 الأرصدة", (CategoryType.BALANCES,)),
 }
 
 
@@ -59,6 +59,9 @@ async def setup_hyper_section(
     stats = {"new": 0, "refreshed": 0, "skipped_dust": 0, "skipped": 0, "title": SECTION_TYPES[section][0]}
     allowed = SECTION_TYPES[section][1]
     tree_map = json.loads(await SettingsService.get(f"store_tree_{provider_id}", "{}") or "{}")
+    from services.store_sync_service import normalize_section_roots, prioritize_top_games
+
+    await normalize_section_roots(session)
 
     async def sub_for_ext(ext_id: str) -> SubCategory | None:
         node = tree_map.get(str(ext_id))
@@ -100,6 +103,10 @@ async def setup_hyper_section(
             continue
         await publish_product(session, ps.id, sub.id, margin_percent=margin)
         stats["new"] += 1
+    if section == "games":
+        top = await prioritize_top_games(session)
+        stats["top_kept"] = top.get("kept", 0)
+        stats["top_hidden"] = top.get("hidden", 0)
     return stats
 
 
@@ -133,7 +140,10 @@ async def setup_smm_section(
             continue
         for kind, items in by_kind.items():
             # 6 لكل نوع: 3 اقتصادي (الأرخص الموثوق فوق الأرضية) + 3 مميز (Refill أولاً)
-            sane = [s for s in items if s.rate_usd >= Decimal("0.01") and int(s.min_quantity or 1) >= 1]
+            # أرضية ضد الخدمات الوهمية الرخيصة ($/ألف) — المشاهدات رخيصة بطبعها
+            floors = {"followers": Decimal("0.20"), "likes": Decimal("0.10"), "views": Decimal("0.005")}
+            floor = floors.get(kind, Decimal("0.01"))
+            sane = [s for s in items if s.rate_usd >= floor and int(s.min_quantity or 1) >= 1]
             sane.sort(key=lambda s: s.rate_usd)
             eco = sane[:3]
             refill = [s for s in sane if s.supports_refill]

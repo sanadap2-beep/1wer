@@ -37,6 +37,7 @@ from handlers import (
     store,
     cart,
     transfer,
+    storefind,
     status,
     language,
     currency,
@@ -141,6 +142,7 @@ def register_routers():
     dp.include_router(numbers.router)
     dp.include_router(store.router)
     dp.include_router(cart.router)
+    dp.include_router(storefind.router)
     dp.include_router(transfer.router)
     dp.include_router(reviews.router)
     dp.include_router(watch.router)

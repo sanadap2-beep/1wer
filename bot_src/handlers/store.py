@@ -162,6 +162,7 @@ async def store_cat(callback: CallbackQuery, session, state: FSMContext):
         if page < total_pages - 1:
             nav.append(InlineKeyboardButton(text="التالي ▶", callback_data=f"store:cat:{cid}:{page + 1}"))
         rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔍 ما لقيت لعبتك / برنامجك؟", callback_data=f"store:find:{cid}", style="primary")])
     rows.append([InlineKeyboardButton(text="🔙 المتجر", callback_data="store:home", style="success")])
     await callback.message.edit_text(
         f"{cat.emoji} <b>{cat.name_ar}</b>\n\n{cat.description or 'اختر الفرع:'}",
@@ -255,15 +256,17 @@ async def store_product(callback: CallbackQuery, session, db_user, state: FSMCon
     price_display = await CurrencyService.format_dual(p.price_usd, db_user, session)
     lines = [
         f"🛍 <b>{p.name_ar}</b>\n",
-        f"💰 السعر: <b>{price_display}</b>",
     ]
+    if p.display_type.value == "per_1000":
+        lines.append(f"💵 السعر لكل 1000: <b>{price_display}</b>")
+    else:
+        lines.append(f"💰 السعر: <b>{price_display}</b>")
+    
     if count:
         lines.append(f"⭐ التقييم: <b>{avg:.1f}</b> ({count})")
     _rate, _rank = await _lux_ctx(session, db_user)
     if _rank:
         lines.append(f"👑 مستوى حسابك: {_rank}")
-    if p.display_type.value == "per_1000":
-        lines.append("(السعر لكل 1000 وحدة)")
     if p.description:
         lines.append(f"\n{p.description[:300]}")
     if p.estimated_time:
@@ -774,8 +777,12 @@ async def _ask_quantity(message, state, session, p, ps, edit: bool, db_user=None
         return
     if p.requires_quantity:
         await state.set_state(StoreStates.waiting_quantity)
+        ref = ""
+        if p.display_type.value == "per_1000":
+            _c1000, _s1000, _m1000 = await price_for(session, p, "1000", db_user)
+            ref = f"\n💵 السعر لكل 1000: <b>{_s1000}$</b>"
         text = (
-            f"🛍 <b>{p.name_ar}</b>\n\n"
+            f"🛍 <b>{p.name_ar}</b>\n{ref}\n\n"
             f"📊 أرسل الكمية المطلوبة (من {p.min_quantity} إلى {p.max_quantity}):"
         )
         if edit:
@@ -786,8 +793,9 @@ async def _ask_quantity(message, state, session, p, ps, edit: bool, db_user=None
         else:
             await message.answer(text)
         return
-    # بدون كمية: تأكيد مباشر
-    await state.update_data(store_qty="1")
+    # بدون كمية حرة: باقة ثابتة → الكمية = حجم الباقة (لا 1!)
+    pack_qty = str(p.min_quantity) if p.min_quantity and p.min_quantity == p.max_quantity and p.min_quantity > 1 else "1"
+    await state.update_data(store_qty=pack_qty)
     await _show_confirm(message, state, session, p, edit=edit, db_user=db_user)
 
 
@@ -978,11 +986,21 @@ async def store_myorders(callback: CallbackQuery, session, db_user):
     }
     lines = ["🧾 <b>آخر طلباتك:</b>\n"]
     for o in orders:
-        pname = f"#{o.product_id}" if o.product_id else "متجر"
+        pname = "طلب مباشر"
         if o.product_id:
             prod = await session.get(Product, o.product_id)
             if prod:
                 pname = prod.name_ar[:25]
+        else:
+            try:
+                import json as _json
+
+                _rd = _json.loads(o.result_data or "{}")
+                _ps = await session.get(ProviderService, int(_rd.get("provider_service_ref", 0)))
+                if _ps:
+                    pname = _ps.name[:25]
+            except Exception:
+                pass
         st = status_ar.get(o.status.value, o.status.value)
         lines.append(f"\n🆔 #{o.id} | {pname}\n{st} | {o.price_usd}$ | {o.created_at.strftime('%Y-%m-%d')}")
     await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
