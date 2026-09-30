@@ -56,7 +56,11 @@ async def setup_hyper_section(
     from services.dynamic_service import DynamicService
     from services.settings_service import SettingsService
 
-    stats = {"new": 0, "refreshed": 0, "skipped_dust": 0, "skipped": 0, "title": SECTION_TYPES[section][0]}
+    stats = {
+        "new": 0, "refreshed": 0, "skipped_dust": 0, "skipped": 0,
+        "no_map": 0, "wrong_type": 0, "filtered": 0,
+        "title": SECTION_TYPES[section][0],
+    }
     allowed = SECTION_TYPES[section][1]
     tree_map = json.loads(await SettingsService.get(f"store_tree_{provider_id}", "{}") or "{}")
     from services.store_sync_service import normalize_section_roots, prioritize_top_games
@@ -65,9 +69,45 @@ async def setup_hyper_section(
 
     async def sub_for_ext(ext_id: str) -> SubCategory | None:
         node = tree_map.get(str(ext_id))
-        if node and node.get("kind") == "sub":
-            return await session.get(SubCategory, int(node["id"]))
+        if not node:
+            return None
+        if node.get("kind") == "sub":
+            sub = await session.get(SubCategory, int(node["id"]))
+            return sub
+        if node.get("kind") == "cat":
+            # منتجات على الجذر مباشرة → فرع "عام" تحته
+            cat = await session.get(Category, int(node["id"]))
+            if cat is None:
+                return None
+            from services.store_sync_service import _ensure_general_sub
+
+            return await _ensure_general_sub(session, cat.id)
         return None
+
+    async def sub_by_category_name(provider_cat: str) -> SubCategory | None:
+        """احتياطي للخدمات القديمة بلا hyper_cat: مطابقة اسم تصنيف المزود لفرع محلي."""
+        from services.store_sync_service import AR_TITLES
+
+        wanted = (provider_cat or "").strip().lower()
+        if not wanted:
+            return None
+        # مرادفات إنجليزية ← عربية من قاموس التعريب
+        aliases = {wanted}
+        for eng, ar in AR_TITLES.items():
+            if eng in wanted or wanted in eng:
+                aliases.add(ar.lower())
+        result = await session.execute(select(SubCategory).where(SubCategory.is_active.is_(True)))
+        best = None
+        for sub in result.scalars().all():
+            name = (sub.name_ar or "").strip().lower()
+            if not name:
+                continue
+            if any(a == name or a in name or name in a for a in aliases):
+                cat = await session.get(Category, sub.category_id)
+                if cat is not None and cat.type in allowed:
+                    if best is None or len(name) > len((best.name_ar or "")):
+                        best = sub
+        return best
 
     result = await session.execute(
         select(ProviderService).where(ProviderService.api_provider_id == provider_id)
@@ -78,15 +118,20 @@ async def setup_hyper_section(
         except Exception:
             extra = {}
         sub = await sub_for_ext(extra.get("hyper_cat", ""))
+        if sub is None and not extra.get("hyper_cat"):
+            sub = await sub_by_category_name(extra.get("category", "") or ps.category or "")
         if sub is None:
             stats["skipped"] += 1
+            stats["no_map"] += 1
             continue
         cat = await session.get(Category, sub.category_id)
         if cat is None or cat.type not in allowed:
             stats["skipped"] += 1
+            stats["wrong_type"] += 1
             continue
         if section == "balances" and not _balance_wanted(sub.name_ar or ""):
             stats["skipped"] += 1
+            stats["filtered"] += 1
             continue
         if not extra.get("quantity_options"):
             max_total = (
@@ -211,9 +256,24 @@ async def setup_smm_section(
 
 
 def format_stats(stats: dict) -> str:
-    return (
-        f"✅ <b>اكتمل تجهيز {stats.get('title', 'القسم')}!</b>\n\n"
-        f"🆕 منتجات جديدة: <b>{stats.get('new', 0)}</b>\n"
-        f"♻️ أسعار حدثت: <b>{stats.get('refreshed', 0)}</b>\n"
-        f"🗑 تخطي غبار: <b>{stats.get('skipped_dust', 0)}</b>"
-    )
+    lines = [
+        f"✅ <b>اكتمل تجهيز {stats.get('title', 'القسم')}!</b>\n",
+        f"🆕 منتجات جديدة: <b>{stats.get('new', 0)}</b>",
+        f"♻️ أسعار حدثت: <b>{stats.get('refreshed', 0)}</b>",
+        f"🗑 تخطي غبار: <b>{stats.get('skipped_dust', 0)}</b>",
+    ]
+    skipped = int(stats.get("skipped", 0) or 0)
+    if skipped:
+        lines.append(f"⏭ متخطاة لأسباب أخرى: <b>{skipped}</b>")
+        details = []
+        if stats.get("no_map"):
+            details.append(f"بلا ربط شجرة: {stats['no_map']}")
+        if stats.get("wrong_type"):
+            details.append(f"خارج القسم: {stats['wrong_type']}")
+        if stats.get("filtered"):
+            details.append(f"مصفاة (غير سيريتل/MTN): {stats['filtered']}")
+        if details:
+            lines.append(f"<i>({ '، '.join(details) })</i>")
+        if int(stats.get("no_map", 0) or 0) > 10:
+            lines.append("\n⚠️ كثير من الخدمات بلا ربط — اعمل <b>🔄 مزامنة الكتالوج</b> أولاً ثم أعد التجهيز.")
+    return "\n".join(lines)
