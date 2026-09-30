@@ -1,6 +1,6 @@
 """
 🔍 «ما لقيت لعبتك / برنامجك؟» — بحث شامل بكل خدمات المزود المسحوبة
-(حتى غير المنشورة بالأقسام) بهامش ثابت 20%.
+(حتى غير المنشورة بالأقسام).
 
 التدفق: زر بالقسم ← شرح + إدخال الاسم (عربي/إنجليزي) ← نتائج
 ← تفاصيل ← هدف ← كمية/فئة ← تأكيد ← طلب مباشر.
@@ -72,8 +72,7 @@ async def find_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "🔍 <b>ما لقيت لعبتك أو برنامجك؟</b>\n\n"
         "ابحث هنا بالعربي أو بالإنجليزي (مثال: <code>ببجي</code> / <code>PUBG</code> / <code>سيريتل</code>):\n\n"
-        "تظهر لك كل النتائج المسحوبة من المزود — حتى غير المعروضة بالأقسام — "
-        "بهامش بحث ثابت <b>20%</b>.",
+        "تظهر لك خدمات إضافية من المزود، حتى لو لم تكن معروضة ضمن القوائم.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="❌ إلغاء", callback_data=back, style="danger")]
         ]),
@@ -133,7 +132,7 @@ async def find_search(message: Message, state: FSMContext, session):
         rows.append([InlineKeyboardButton(
             text=f"{ps.name[:38]} — {price_txt}", callback_data=f"store:found:{ps.id}", style="success")])
     rows.append([InlineKeyboardButton(text="🔎 بحث جديد", callback_data=f"store:find:{data.get('find_cat', 0)}")])
-    await message.answer("\n".join(lines) + "\nالأسعار تشمل هامش البحث 20% — اضغط خدمة للتفاصيل:",
+    await message.answer("\n".join(lines) + "\nاختر الخدمة لعرض تفاصيلها:",
                          reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await state.clear()
 
@@ -152,7 +151,7 @@ async def find_detail(callback: CallbackQuery, session, state: FSMContext, db_us
     text = (
         f"🔍 <b>{ps.name[:80]}</b>\n\n"
         f"📂 التصنيف: {ps.category or '—'}\n"
-        f"💵 السعر {per} (شامل 20%): <b>{sell}$</b>\n"
+        f"💵 السعر {per}: <b>{sell}$</b>\n"
         f"📝 المطلوب: {kind_names.get(kind, kind)}\n"
     )
     if options:

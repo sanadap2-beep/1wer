@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -92,11 +93,34 @@ def hyper_category_type(name: str) -> tuple[CategoryType, str]:
 
 AR_TITLES: dict[str, str] = {
     "pubg mobile": "ببجي موبايل",
+    "pubg": "ببجي",
     "pubg global auto": "ببجي عالمي تلقائي",
     "pubg memberships": "عضويات ببجي",
     "pubg new state": "ببجي نيو ستيت",
     "pubg syria": "ببجي سوريا",
     "free fire": "فري فاير",
+    "free fire max": "فري فاير ماكس",
+    "call of duty mobile": "كول أوف ديوتي موبايل",
+    "call of duty": "كول أوف ديوتي",
+    "cod mobile": "كول أوف ديوتي موبايل",
+    "codm": "كول أوف ديوتي موبايل",
+    "clash of plants": "كلاش أوف بلانتس",
+    "clash royale": "كلاش رويال",
+    "clash of clans": "كلاش أوف كلانس",
+    "ludo clud": "لودو كلوب",
+    "ludo club": "لودو كلوب",
+    "mobile legends": "موبايل ليجندز",
+    "mobile legends bang bang": "موبايل ليجندز: بانغ بانغ",
+    "mlbb": "موبايل ليجندز",
+    "fc mobile": "إف سي موبايل",
+    "dream league soccer": "دريم ليج سوكر",
+    "roblox": "روبلوكس",
+    "minecraft": "ماينكرافت",
+    "valorant": "فالورانت",
+    "league of legends": "ليغ أوف ليجندز",
+    "subway surfers": "صب واي سيرفرز",
+    "pokemon go": "بوكيمون جو",
+    "wuthering waves": "وذرينغ ويفز",
     "mobile legend": "موبايل ليجند",
     "jawaker": "جواكر",
     "8ball pool": "بلياردو 8",
@@ -115,8 +139,8 @@ AR_TITLES: dict[str, str] = {
     "mtn": "MTN",
     "alfa": "ألفا",
     "touch": "تاتش",
-    "ludo club": "لودو كلوب",
     "لودو clud": "لودو كلوب",
+    "clud": "كلوب",
     "yalla ludo": "يلا لودو",
     "honor of king": "أونر أوف كينغ",
     "genshin impact": "قنشن إمباكت",
@@ -126,11 +150,6 @@ AR_TITLES: dict[str, str] = {
     "stumble guys": "ستامبل جايز",
     "super sus": "سوبر ساس",
     "farlight84": "فارلايت 84",
-    "brawl stars": "براول ستارز",
-    "mobile legend": "موبايل ليجند",
-    "8ball pool": "بلياردو",
-    "free fire": "فري فاير",
-    "pubg mobile": "ببجي موبايل",
     "itunes": "آيتونز",
     "google play": "جوجل بلاي",
     "play station": "بلايستيشن",
@@ -145,36 +164,85 @@ def _has_arabic(text: str) -> bool:
     return any("؀" <= c <= "ۿ" for c in (text or ""))
 
 
+def _has_latin(text: str) -> bool:
+    return bool(re.search(r"[A-Za-z]", text or ""))
+
+
 def localize_title(name: str) -> str:
-    """اسم عربي للعرض: من القاموس، أو الأصل إن كان عربياً، أو الأصل كما هو."""
+    """اسم عربي للعرض: ترجمة أسماء الألعاب المعروفة ونقل صوتي لأي اسم لاتيني متبقٍ."""
     name = (name or "").strip()
     if not name:
         return "قسم"
-    if _has_arabic(name):
-        return name[:64]
-    return AR_TITLES.get(name.lower(), name[:64])
+    key = " ".join(name.casefold().split())
+    if key in AR_TITLES:
+        return AR_TITLES[key][:64]
+
+    # استبدل أسماء الألعاب المعروفة داخل العناوين المركبة أيضاً.
+    localized = name
+    for english, arabic in sorted(AR_TITLES.items(), key=lambda item: len(item[0]), reverse=True):
+        if not _has_latin(english):
+            continue
+        localized = re.sub(
+            rf"(?<![A-Za-z]){re.escape(english)}(?![A-Za-z])",
+            arabic,
+            localized,
+            flags=re.IGNORECASE,
+        )
+
+    # بعض أسماء المزود تكون عربية وإنجليزية في نفس السطر (مثل: لودو clud).
+    # عرّب الأحرف اللاتينية أيضاً حتى لا تبقى أسماء مختلطة في قوائم الزبائن.
+    digraphs = (
+        ("tch", "تش"), ("sch", "سك"), ("sh", "ش"), ("ch", "تش"),
+        ("th", "ث"), ("ph", "ف"), ("kh", "خ"), ("gh", "غ"),
+        ("ck", "ك"), ("qu", "ك"), ("oo", "و"), ("ee", "ي"),
+        ("ea", "ي"), ("ai", "اي"), ("ay", "اي"), ("ou", "او"),
+        ("ow", "او"), ("ng", "نغ"),
+    )
+    letters = {
+        "a": "ا", "b": "ب", "c": "ك", "d": "د", "e": "ي",
+        "f": "ف", "g": "ج", "h": "ه", "i": "ي", "j": "ج",
+        "k": "ك", "l": "ل", "m": "م", "n": "ن", "o": "و",
+        "p": "ب", "q": "ك", "r": "ر", "s": "س", "t": "ت",
+        "u": "و", "v": "ڤ", "w": "و", "x": "كس", "y": "ي", "z": "ز",
+    }
+
+    def transliterate_word(word: str) -> str:
+        source = word.casefold()
+        output: list[str] = []
+        i = 0
+        while i < len(source):
+            match = next(
+                ((latin, arabic) for latin, arabic in digraphs if source.startswith(latin, i)),
+                None,
+            )
+            if match:
+                latin, arabic = match
+                output.append(arabic)
+                i += len(latin)
+            else:
+                output.append(letters.get(source[i], source[i]))
+                i += 1
+        return "".join(output)
+
+    localized = re.sub(r"[A-Za-z]+", lambda match: transliterate_word(match.group()), localized)
+    localized = re.sub(r"\s+", " ", localized).strip()
+    return localized[:64]
 
 
-# ── الأقسام الأربعة الثابتة + أشهر 20 لعبة بسوريا ──
+# ── أسماء الأقسام الثابتة ──
 
 SECTION_ROOT_NAMES: dict[CategoryType, tuple[str, str]] = {
     CategoryType.GAMES: ("شحن الألعاب", "🎮"),
-    CategoryType.APPS: ("شحن البرامج", "📱"),
+    CategoryType.APPS: ("اشتراكات التطبيقات", "📱"),
     CategoryType.BALANCES: ("الأرصدة", "💳"),
     CategoryType.SMM: ("الرشق", "📈"),
 }
 
-# كلمات مطابقة لأشهر 20 لعبة (بالترتيب) — الباقي يُخفى (قابل للتفعيل يدوياً)
-TOP_GAMES_ORDER: list[str] = [
-    "pubg mobile", "free fire", "jawaker", "efootball", "mobile legend",
-    "brawl stars", "clash", "8ball", "yalla ludo", "ludo",
-    "delta force", "blood strike", "honor of king", "genshin", "genshen",
-    "honkai", "whiteout", "stumble", "super sus", "farlight", "arena breakout",
-]
-
 ORIGINAL_ROOT_NAMES = {
     "الألعاب", "الالعاب", "التطبيقات", "قسم الأرصدة", "قسم الارصدة",
-    "رشق سوشيال ميديا", "رشق",
+    "رشق سوشيال ميديا", "رشق", "شحن البرامج", "شحن التطبيقات",
+    "شحن برامج", "البرامج", "برامج", "اشتراكات البرامج",
+    "تطبيقات واشتراكات",
 }
 
 
@@ -205,35 +273,21 @@ async def normalize_section_roots(session) -> int:
     return changed
 
 
-async def prioritize_top_games(session) -> dict:
-    """يُبقي أشهر 20 لعبة مرتبة ويخفي الباقي (عكسي من اللوحة)."""
+async def activate_all_games(session) -> dict:
+    """يُظهر كل الألعاب المتزامنة في قوائم المتجر بدلاً من حصرها بقائمة قصيرة."""
     result = await session.execute(select(Category).where(Category.type == CategoryType.GAMES))
     cats = list(result.scalars().all())
-    stats = {"kept": 0, "hidden": 0}
+    stats = {"active": 0, "reactivated": 0}
     for cat in cats:
         subs_result = await session.execute(select(SubCategory).where(
             SubCategory.category_id == cat.id,
             SubCategory.parent_sub_category_id.is_(None)))
         subs = list(subs_result.scalars().all())
-        ranked: list[tuple[int, SubCategory]] = []
-        used: set[int] = set()
-        for idx, keyword in enumerate(TOP_GAMES_ORDER):
-            for sub in subs:
-                if sub.id in used:
-                    continue
-                if keyword in (sub.name_ar or "").lower():
-                    ranked.append((idx, sub))
-                    used.add(sub.id)
-                    break
-        for order, (idx, sub) in enumerate(sorted(ranked)):
-            sub.sort_order = (order + 1) * 10
+        for sub in subs:
             if not sub.is_active:
                 sub.is_active = True
-            stats["kept"] += 1
-        for sub in subs:
-            if sub.id not in used and sub.is_active:
-                sub.is_active = False
-                stats["hidden"] += 1
+                stats["reactivated"] += 1
+            stats["active"] += 1
         await session.commit()
     return stats
 
@@ -622,7 +676,7 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
                     report.subs_added += 1
                 else:
                     # لا نمس تعديل الأدمن العربي — نعرّب الأجنبي فقط
-                    if not _has_arabic(sub.name_ar or ""):
+                    if not _has_arabic(sub.name_ar or "") or _has_latin(sub.name_ar or ""):
                         sub.name_ar = localize_title(name)
                         await session.commit()
                     report.subs_updated += 1

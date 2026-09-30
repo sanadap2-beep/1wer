@@ -32,7 +32,7 @@ from services.store_sync_service import (
 
 SECTION_TYPES: dict[str, tuple[str, tuple[CategoryType, ...]]] = {
     "games": ("🎮 شحن الألعاب", (CategoryType.GAMES,)),
-    "apps": ("📱 شحن التطبيقات", (CategoryType.APPS,)),
+    "apps": ("📱 اشتراكات التطبيقات", (CategoryType.APPS,)),
     "balances": ("💳 الأرصدة", (CategoryType.BALANCES,)),
 }
 
@@ -64,7 +64,7 @@ async def setup_hyper_section(
     }
     allowed = SECTION_TYPES[section][1]
     tree_map = json.loads(await SettingsService.get(f"store_tree_{provider_id}", "{}") or "{}")
-    from services.store_sync_service import normalize_section_roots, prioritize_top_games
+    from services.store_sync_service import activate_all_games, normalize_section_roots
 
     await normalize_section_roots(session)
 
@@ -97,7 +97,7 @@ async def setup_hyper_section(
         for eng, ar in AR_TITLES.items():
             if eng in wanted or wanted in eng:
                 aliases.add(ar.lower())
-        result = await session.execute(select(SubCategory).where(SubCategory.is_active.is_(True)))
+        result = await session.execute(select(SubCategory))
         best = None
         for sub in result.scalars().all():
             name = (sub.name_ar or "").strip().lower()
@@ -119,8 +119,15 @@ async def setup_hyper_section(
         except Exception:
             extra = {}
         sub = await sub_for_ext(extra.get("hyper_cat", ""))
-        if sub is None and not extra.get("hyper_cat"):
-            sub = await sub_by_category_name(extra.get("category", "") or ps.category or "")
+        category_hint = extra.get("category", "") or ps.category or ""
+        if sub is not None:
+            mapped_cat = await session.get(Category, sub.category_id)
+            if mapped_cat is None or mapped_cat.type not in allowed:
+                sub = None
+        # كتالوجات HyperStore القديمة أو المعاد بناؤها قد تحمل ربط شجرة غير صالح.
+        # جرّب اسم التصنيف قبل إسقاط الخدمة حتى لا تختفي الألعاب القابلة للتصنيف.
+        if sub is None:
+            sub = await sub_by_category_name(category_hint)
         if sub is None:
             stats["skipped"] += 1
             stats["no_map"] += 1
@@ -157,9 +164,9 @@ async def setup_hyper_section(
         await publish_product(session, ps.id, sub.id, margin_percent=margin)
         stats["new"] += 1
     if section == "games":
-        top = await prioritize_top_games(session)
-        stats["top_kept"] = top.get("kept", 0)
-        stats["top_hidden"] = top.get("hidden", 0)
+        games = await activate_all_games(session)
+        stats["games_active"] = games.get("active", 0)
+        stats["games_reactivated"] = games.get("reactivated", 0)
     return stats
 
 
@@ -284,6 +291,11 @@ def format_stats(stats: dict) -> str:
         lines.append(f"📦 منتجات موجودة دون تغيير: <b>{stats['existing']}</b>")
     if stats.get("relinked"):
         lines.append(f"🔗 منتجات أُعيد ربطها بفرعها الصحيح: <b>{stats['relinked']}</b>")
+    if stats.get("games_active") is not None:
+        lines.append(
+            f"🎮 فروع الألعاب المفعّلة: <b>{stats['games_active']}</b> "
+            f"(أُعيد تفعيل {stats.get('games_reactivated', 0)} فرعاً كانت مخفية)"
+        )
     skipped = int(stats.get("skipped", 0) or 0)
     if skipped:
         lines.append(f"⏭ متخطاة لأسباب أخرى: <b>{skipped}</b>")
