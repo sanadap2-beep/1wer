@@ -57,7 +57,8 @@ async def setup_hyper_section(
     from services.settings_service import SettingsService
 
     stats = {
-        "new": 0, "refreshed": 0, "skipped_dust": 0, "skipped": 0,
+        "new": 0, "refreshed": 0, "existing": 0, "relinked": 0,
+        "skipped_dust": 0, "skipped": 0,
         "no_map": 0, "wrong_type": 0, "filtered": 0,
         "title": SECTION_TYPES[section][0],
     }
@@ -143,8 +144,15 @@ async def setup_hyper_section(
                 continue
         existing = await existing_product_for_service(session, ps.id)
         if existing:
+            if existing.sub_category_id != sub.id:
+                await DynamicService.update_product(
+                    session, existing.id, sub_category_id=sub.id
+                )
+                stats["relinked"] += 1
             if await refresh_published_price(session, existing, margin):
                 stats["refreshed"] += 1
+            else:
+                stats["existing"] += 1
             continue
         await publish_product(session, ps.id, sub.id, margin_percent=margin)
         stats["new"] += 1
@@ -164,7 +172,10 @@ async def setup_smm_section(
     """يجهز قسم الرشق كاملاً. يرجع إحصائيات."""
     from services.dynamic_service import DynamicService
 
-    stats = {"new": 0, "refreshed": 0, "skipped_dust": 0, "skipped": 0, "title": "📈 الرشق"}
+    stats = {
+        "new": 0, "refreshed": 0, "existing": 0, "relinked": 0,
+        "skipped_dust": 0, "skipped": 0, "title": "📈 الرشق",
+    }
     _cat, app_subs = await ensure_smm_structure(session)
     result = await session.execute(
         select(ProviderService).where(ProviderService.api_provider_id == provider_id)
@@ -213,8 +224,15 @@ async def setup_smm_section(
             for tag, svc in picks:
                 existing = await existing_product_for_service(session, svc.id)
                 if existing:
+                    if existing.sub_category_id != child.id:
+                        await DynamicService.update_product(
+                            session, existing.id, sub_category_id=child.id
+                        )
+                        stats["relinked"] += 1
                     if await refresh_published_price(session, existing, margin):
                         stats["refreshed"] += 1
+                    else:
+                        stats["existing"] += 1
                     continue
                 # الاسم: النوع + التطبيق + الفئة + لمحة من وصف المزود
                 hint = (svc.name or "").strip()
@@ -257,11 +275,15 @@ async def setup_smm_section(
 
 def format_stats(stats: dict) -> str:
     lines = [
-        f"✅ <b>اكتمل تجهيز {stats.get('title', 'القسم')}!</b>\n",
+        f"📋 <b>نتيجة تجهيز {stats.get('title', 'القسم')}</b>\n",
         f"🆕 منتجات جديدة: <b>{stats.get('new', 0)}</b>",
         f"♻️ أسعار حدثت: <b>{stats.get('refreshed', 0)}</b>",
         f"🗑 تخطي غبار: <b>{stats.get('skipped_dust', 0)}</b>",
     ]
+    if stats.get("existing"):
+        lines.append(f"📦 منتجات موجودة دون تغيير: <b>{stats['existing']}</b>")
+    if stats.get("relinked"):
+        lines.append(f"🔗 منتجات أُعيد ربطها بفرعها الصحيح: <b>{stats['relinked']}</b>")
     skipped = int(stats.get("skipped", 0) or 0)
     if skipped:
         lines.append(f"⏭ متخطاة لأسباب أخرى: <b>{skipped}</b>")
@@ -275,5 +297,7 @@ def format_stats(stats: dict) -> str:
         if details:
             lines.append(f"<i>({ '، '.join(details) })</i>")
         if int(stats.get("no_map", 0) or 0) > 10:
-            lines.append("\n⚠️ كثير من الخدمات بلا ربط — اعمل <b>🔄 مزامنة الكتالوج</b> أولاً ثم أعد التجهيز.")
+            lines.append(
+                "\n⚠️ تعذر ربط خدمات كثيرة بفروع القسم. راجع تصنيفاتها في كتالوج المزود."
+            )
     return "\n".join(lines)

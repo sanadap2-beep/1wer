@@ -10,6 +10,7 @@
 """
 
 from decimal import Decimal
+from html import escape
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
@@ -140,17 +141,59 @@ async def setup_margin_received(message: Message, state: FSMContext, session):
     if provider is None:
         await message.answer("⚠️ المزود غير متوفر حالياً.")
         return
-    status = await message.answer(f"⏳ <b>جاري {cfg['title']}...</b>\n\nبهامش {margin}% — لا تضغط شيئاً.")
+    status = await message.answer(
+        f"⏳ <b>جاري تجهيز {cfg['title']}...</b>\n\n"
+        f"بهامش {margin}%. سيتم تحديث كتالوج المزود أولاً؛ لا تضغط شيئاً حتى ينتهي."
+    )
     try:
         if cfg["hyper"]:
+            from services.store_sync_service import sync_provider
+
+            sync_report = await sync_provider(session, provider)
+            if sync_report.error:
+                text = (
+                    f"❌ <b>تعذرت مزامنة كتالوج {escape(provider.name)}</b>\n\n"
+                    f"<code>{escape(sync_report.error[:250])}</code>\n\n"
+                    "لم أتابع نشر المنتجات حتى لا أترك القسم ناقصاً. افحص اتصال المزود ثم أعد المحاولة."
+                )
+                raise RuntimeError(text)
+            if not sync_report.total_services:
+                text = (
+                    f"⚠️ <b>لم يُرجع مزود {escape(provider.name)} أي خدمة.</b>\n\n"
+                    "لم أتابع تجهيز القسم. افحص اتصال المزود والكتالوج ثم أعد المحاولة."
+                )
+                raise RuntimeError(text)
+
+            await status.edit_text(
+                f"✅ تم تحديث الكتالوج ({sync_report.total_services} خدمة).\n"
+                f"⏳ جاري تجهيز {cfg['title']} بهامش {margin}%..."
+            )
             stats = await setup_hyper_section(session, provider.id, section, margin)
         else:
             stats = await setup_smm_section(session, provider.id, margin)
-        text = format_stats(stats) + "\n\nالقسم جاهز للبيع الآن ✅"
+        text = format_stats(stats)
+        ready_count = sum(
+            int(stats.get(key, 0) or 0)
+            for key in ("new", "refreshed", "existing", "relinked")
+        )
+        if ready_count:
+            text += "\n\n✅ القسم يحتوي الآن على منتجات منشورة."
+        else:
+            text += "\n\n⚠️ لم يُنشأ أو يُحدّث أي منتج؛ القسم غير جاهز للبيع بعد."
+            if stats.get("no_map"):
+                text += (
+                    f"\nما زالت {stats['no_map']} خدمة بلا ربط تصنيفي بعد مزامنة الكتالوج. "
+                    "راجع تصنيفات المزود أو تواصل مع دعم المزود."
+                )
     except Exception as exc:
-        text = f"❌ فشل التجهيز: {str(exc)[:250]}"
+        error_text = str(exc)
+        if error_text.startswith(("❌", "⚠️")):
+            text = error_text
+        else:
+            text = f"❌ فشل التجهيز: <code>{escape(error_text[:250])}</code>"
     try:
         await status.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔌 صفحة المزود", callback_data=f"admin:store_prov:{provider.id}")],
             [InlineKeyboardButton(text="📁 أقسام المتجر", callback_data="admin:store_cats", style="success")],
             [InlineKeyboardButton(text="🔙 لوحة الإدارة", callback_data="admin:main")],
         ]))
