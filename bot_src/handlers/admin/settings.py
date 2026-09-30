@@ -89,6 +89,25 @@ _PAYMENT_SETTING_KEYS = (
 )
 
 
+async def _payment_diagnostics_text() -> str:
+    """Render safe readiness diagnostics for each user-facing payment method."""
+    labels = {
+        "shamcash_manual": "شام كاش يدوي",
+        "stars": "نجوم تيليجرام",
+        "usdt_manual": "USDT يدوي",
+        "shamcash_auto": "شام كاش تلقائي",
+        "usdt_auto": "USDT تلقائي",
+        "mobile_credit": "رصيد جوال",
+        "other": "طرق أخرى",
+    }
+    diagnostics = await payment_method_diagnostics()
+    return "\n".join(
+        f"{'✅' if diagnostic.enabled else '⚠️'} "
+        f"<b>{labels.get(method, method)}</b>: {diagnostic.reason}"
+        for method, diagnostic in diagnostics.items()
+    )
+
+
 @router.callback_query(F.data == "admin:payment_settings")
 async def payment_settings_menu(callback: CallbackQuery):
     values = {
