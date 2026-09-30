@@ -18,6 +18,11 @@ class SupportTicketStates(StatesGroup):
     waiting_message = State()
 
 
+class ProductGiftStates(StatesGroup):
+    waiting_recipient = State()
+    confirming_purchase = State()
+
+
 class AiSupportStates(StatesGroup):
     waiting_question = State()
 

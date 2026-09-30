@@ -111,6 +111,12 @@ async def _render_ticket_detail(callback: CallbackQuery, ticket: SupportTicket):
         f"📅 التاريخ: {ticket.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
         f"<b>رسالة المستخدم:</b>\n{escape(ticket.message)}"
     )
+    if ticket.number_order_id is not None:
+        text += f"\n\n🔗 الطلب المرتبط: رقم #{ticket.number_order_id}"
+    elif ticket.unified_order_id is not None:
+        text += f"\n\n🔗 الطلب المرتبط: طلب #{ticket.unified_order_id}"
+    if ticket.attachment_file_id:
+        text += "\n📎 أرفق المستخدم صورة دليل (وصلت مع إشعار التذكرة)."
     if ticket.admin_reply:
         text += f"\n\n<b>آخر رد:</b>\n{escape(ticket.admin_reply)}"
     if ticket.admin_id:
