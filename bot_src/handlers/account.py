@@ -129,7 +129,7 @@ async def my_watches(callback: CallbackQuery, session, db_user: User):
     kb = InlineKeyboardBuilder()
     for watch in watches:
         if watch.product:
-            lines.append(f'\n📦 {watch.product.name_ar} · {watch.product.price_usd}$')
+            lines.append(f'\n🛍 {watch.product.name_ar} · {watch.product.price_usd}$')
             kb.button(text=f'🔕 إلغاء {watch.product.name_ar[:25]}', callback_data=f'watch:toggle:{watch.product_id}')
     kb.button(text='🔙 رجوع لحسابي', callback_data='menu:account')
     kb.adjust(1)
@@ -186,7 +186,7 @@ async def my_unified_orders(callback: CallbackQuery, session, db_user: User):
         product_name = '—'
         if o.product:
             product_name = o.product.name_ar
-        line = f"\n🆔 #{o.id}\n📦 المنتج: {product_name}\nالحالة: {status_label} | السعر: {o.price_usd}$\nالتاريخ: {o.created_at.strftime('%Y-%m-%d %H:%M')}"
+        line = f"\n🆔 #{o.id}\n🛍 المنتج: {product_name}\nالحالة: {status_label} | السعر: {o.price_usd}$\nالتاريخ: {o.created_at.strftime('%Y-%m-%d %H:%M')}"
         if o.target:
             line += f'\n🎯 الهدف: <code>{o.target}</code>'
         lines.append(line)
@@ -212,7 +212,7 @@ async def unified_order_detail(callback: CallbackQuery, session, db_user: User):
         return
     status_label = _label(UNIFIED_STATUS_LABELS, order.status, db_user.language_code)
     product_name = order.product.name_ar if order.product else '—'
-    text = f"🛒 <b>تفاصيل الطلب #{order.id}</b>\n\n📦 المنتج: <b>{product_name}</b>\n📊 الحالة: {status_label}\n💰 المبلغ: <b>{order.price_usd}$</b>\n🎯 الهدف: <code>{order.target or '—'}</code>\n📊 الكمية: {order.quantity}\n🆔 رقم المزود: <code>{order.external_order_id or '—'}</code>\n📝 الحالة التفصيلية: {order.status_message or '—'}\n📅 التاريخ: {order.created_at.strftime('%Y-%m-%d %H:%M')}"
+    text = f"🛒 <b>تفاصيل الطلب #{order.id}</b>\n\n🛍 المنتج: <b>{product_name}</b>\n📊 الحالة: {status_label}\n💰 المبلغ: <b>{order.price_usd}$</b>\n🎯 الهدف: <code>{order.target or '—'}</code>\n📊 الكمية: {order.quantity}\n🆔 رقم المزود: <code>{order.external_order_id or '—'}</code>\n📝 الحالة التفصيلية: {order.status_message or '—'}\n📅 التاريخ: {order.created_at.strftime('%Y-%m-%d %H:%M')}"
     if order.remains is not None:
         text += f'\n⏳ المتبقي: {order.remains}'
     delivery_result = await session.execute(select(DigitalInventoryItem).where(DigitalInventoryItem.unified_order_id == order.id))
@@ -266,7 +266,7 @@ async def repeat_order(callback: CallbackQuery, session, db_user: User, state: F
     await state.clear()
     await callback.answer()
     from aiogram.types import InlineKeyboardButton as _B, InlineKeyboardMarkup as _M
-    await callback.message.edit_text(f"🔁 <b>إعادة الطلب</b>\n\n📦 المنتج: <b>{order.product.name_ar}</b>\n🎯 الهدف السابق: <code>{order.target or '—'}</code>\n📊 الكمية السابقة: {order.quantity}\n\nاضغط للطلب مجدداً بنفس المنتج:",
+    await callback.message.edit_text(f"🔁 <b>إعادة الطلب</b>\n\n🛍 المنتج: <b>{order.product.name_ar}</b>\n🎯 الهدف السابق: <code>{order.target or '—'}</code>\n📊 الكمية السابقة: {order.quantity}\n\nاضغط للطلب مجدداً بنفس المنتج:",
         reply_markup=_M(inline_keyboard=[[ _B(text="🛒 إعادة طلب نفس المنتج", callback_data=f"store:prod:{order.product.id}", style="success")], [_B(text="🏠 القائمة الرئيسية", callback_data="back_to_main")]]))
 
 @router.callback_query(F.data.startswith('my_transactions:'))

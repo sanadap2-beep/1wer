@@ -132,16 +132,17 @@ async def setup_smm_section(
             stats["skipped"] += 1
             continue
         for kind, items in by_kind.items():
-            items.sort(key=lambda s: s.rate_usd)
-            cheapest = items[0]
-            quality = None
-            refill = [s for s in items if s.supports_refill]
-            if refill:
-                refill.sort(key=lambda s: s.rate_usd)
-                quality = refill[0]
-            picks = [("اقتصادي 💰", cheapest)]
-            if quality and quality.id != cheapest.id:
-                picks.append(("مميز ⭐", quality))
+            # 6 لكل نوع: 3 اقتصادي (الأرخص الموثوق فوق الأرضية) + 3 مميز (Refill أولاً)
+            sane = [s for s in items if s.rate_usd >= Decimal("0.01") and int(s.min_quantity or 1) >= 1]
+            sane.sort(key=lambda s: s.rate_usd)
+            eco = sane[:3]
+            refill = [s for s in sane if s.supports_refill]
+            refill.sort(key=lambda s: s.rate_usd)
+            pro = [s for s in refill if s not in eco][:3]
+            if len(pro) < 3:
+                rest = [s for s in reversed(sane) if s not in eco and s not in pro]
+                pro += rest[:3 - len(pro)]
+            picks = [("اقتصادي 💰", s) for s in eco] + [("مميز ⭐", s) for s in pro]
             rc = await session.execute(select(SubCategory).where(
                 SubCategory.category_id == app_sub.category_id,
                 SubCategory.kind_key == f"{app_kind}:{kind}",
@@ -160,7 +161,14 @@ async def setup_smm_section(
                     if await refresh_published_price(session, existing, margin):
                         stats["refreshed"] += 1
                     continue
+                # الاسم: النوع + التطبيق + الفئة + لمحة من وصف المزود
+                hint = (svc.name or "").strip()
+                for drop in (app_sub.name_ar, kind_ar.get(kind, kind)):
+                    hint = hint.replace(drop, "")
+                hint = " ".join(hint.split())[:45]
                 name = f"{kind_ar.get(kind, kind)} {app_ar} ({tag})"
+                if hint:
+                    name = f"{name} — {hint}"
                 sell_1k = svc.rate_usd * (Decimal("100") + margin) / Decimal("100")
                 if sell_1k >= Decimal("0.50"):
                     await publish_product(

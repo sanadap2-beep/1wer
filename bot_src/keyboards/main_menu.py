@@ -36,8 +36,8 @@ def build_main_menu(
 
     # الأرقام أولاً — قلب البوت
     b.button(text="📱 شراء أرقام", callback_data="num_hub", style="success")
-    b.button(text="📦 جلسات تيليجرام الجاهزة", callback_data="tgready:list", style="success")
-    b.button(text="🛍 المتجر (رشق/ألعاب/برامج/رصيد)", callback_data="store:home", style="success")
+    b.button(text="قسم ارقام تلجرام جاهزة", callback_data="tgready:list", style="success")
+    b.button(text="🛍 المتجر", callback_data="store:home", style="success")
     b.button(text=t("menu_account_with_balance", balance=balance_text), callback_data="menu:account", style="primary")
     b.button(text=t("menu_deposit"), callback_data="menu:deposit", style="primary")
     b.button(text=t("menu_referral"), callback_data="menu:referral", style="primary")

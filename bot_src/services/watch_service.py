@@ -94,7 +94,7 @@ class WatchService:
                             f"💰 السعر {direction}: {watch.last_seen_price}$ → {product.price_usd}$"
                         )
                     if restocked:
-                        parts.append("📦 عاد المنتج إلى المخزون.")
+                        parts.append("🛍 عاد المنتج إلى المخزون.")
                     parts.append("افتح الكتالوج الآن للاستفادة.")
                     await NotificationService(bot).notify_user(user.telegram_id, "\n".join(parts))
                     watch.last_notified_at = datetime.utcnow()

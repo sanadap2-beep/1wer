@@ -13,7 +13,7 @@ class ReceiptService:
             "🧾 <b>إيصال عملية شراء</b>\n"
             "━━━━━━━━━━━━━━\n"
             f"🆔 رقم الطلب: <code>#{order.id}</code>\n"
-            f"📦 المنتج: {escape(product_name)}\n"
+            f"🛍 المنتج: {escape(product_name)}\n"
             f"📊 الحالة: {escape(order.status.value)}\n"
             f"💰 المبلغ: <b>{order.price_usd}$</b>\n"
             f"📊 الكمية: {order.quantity}\n"

@@ -110,7 +110,7 @@ async def _render_home(callback: CallbackQuery, session, period: str) -> None:
     )
     extra = [
         ("💳 شحنات المستخدمين", f"ld:dep:{summary.period}:0"),
-        ("📦 أرباح كل خدمة", f"ld:svc:{summary.period}:0"),
+        ("📊 أرباح كل خدمة", f"ld:svc:{summary.period}:0"),
     ]
     await callback.message.edit_text(
         text,
@@ -175,7 +175,7 @@ async def ledger_services(callback: CallbackQuery, session):
     last = max(1, (total + SERVICES_PER_PAGE - 1) // SERVICES_PER_PAGE)
     label = PERIOD_LABELS[period]
     lines = [
-        "📦 <b>أرباح كل خدمة</b>",
+        "📊 <b>أرباح كل خدمة</b>",
         "طلبات المستخدمين فقط — مشتريات الأدمن مستثناة.",
         f"📅 {label} · {total} خدمة · صفحة {page + 1}/{last}",
         f"Σ مبيعات {_fmt(sales)} · تكلفة {_fmt(cost)} · ربح <b>{_fmt(profit)}</b>",

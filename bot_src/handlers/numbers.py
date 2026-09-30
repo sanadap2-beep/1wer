@@ -77,7 +77,7 @@ def _attach_tg_ready_entry(markup: InlineKeyboardMarkup, total: int) -> InlineKe
     rows = [
         [
             InlineKeyboardButton(
-                text=f"📦 حسابات جاهزة — جلسات (متاح {total})",
+                text=f"🔢 ارقام تلجرام جاهزة (متاح {total})",
                 callback_data="tgready:list",
             )
         ]
@@ -546,14 +546,14 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
         await callback.answer("الباقات الجاهزة غير مفعّلة حالياً.", show_alert=True)
         return
     if not await FeatureService.enabled("bulk_numbers"):
-        await callback.message.edit_text("📦 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.")
+        await callback.message.edit_text("🔢 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.")
         await callback.answer()
         return
 
     services = [svc for svc in await get_active_number_services(session) if svc.is_active]
     countries = [c for c in await get_active_countries(session) if c.is_active]
     if not services or not countries:
-        await callback.message.edit_text("📦 لا توجد باقات أرقام مفعّلة حالياً.")
+        await callback.message.edit_text("🔢 لا توجد باقات أرقام مفعّلة حالياً.")
         await callback.answer()
         return
 
@@ -574,7 +574,7 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
         for quantity in quantities[:2]:
             packages.append(
                 {
-                    "label": f"📦 {quantity} رقم {service.name_ar} · {country.flag} {country.name_ar}",
+                    "label": f"🔢 {quantity} رقم {service.name_ar} · {country.flag} {country.name_ar}",
                     "service_code": service.code,
                     "country_code": country.code,
                     "country_id": country.id,
@@ -587,7 +587,7 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
             break
 
     await callback.message.edit_text(
-        "📦 <b>باقات أرقام جاهزة</b>\n\nاختر باقة لعرض السعر والخصم قبل التنفيذ:",
+        "🔢 <b>باقات أرقام جاهزة</b>\n\nاختر باقة لعرض السعر والخصم قبل التنفيذ:",
         reply_markup=ready_number_packages_kb(packages),
     )
     await callback.answer()
@@ -659,7 +659,7 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
             f"<b>{await NumberServerService.public_name(session, server)}</b>\n"
         )
     text = (
-        "📦 <b>تأكيد شراء دفعة أرقام بالجملة</b>\n\n"
+        "🔢 <b>تأكيد شراء دفعة أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
         f"{server_line}"
         f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
@@ -680,7 +680,7 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
 @router.callback_query(F.data.startswith("num_bulk_start:"))
 async def bulk_start(callback: CallbackQuery, session, db_user: User):
     if not await FeatureService.enabled("bulk_numbers"):
-        await callback.answer("📦 الشراء بالجملة غير مفعّل حالياً.", show_alert=True)
+        await callback.answer("🔢 الشراء بالجملة غير مفعّل حالياً.", show_alert=True)
         return
 
     parts = callback.data.split(":")
@@ -707,7 +707,7 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
             )
 
     await callback.message.edit_text(
-        f"📦 <b>شراء أرقام بالجملة</b>\n\n"
+        f"🔢 <b>شراء أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
         f"{server_line}"
         f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
@@ -759,7 +759,7 @@ async def bulk_custom_quantity_received(message: Message, state: FSMContext, ses
 @router.callback_query(F.data.startswith("num_bulk_confirm:"))
 async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
     if not await FeatureService.enabled("bulk_numbers"):
-        await callback.answer("📦 الشراء بالجملة غير مفعّل.", show_alert=True)
+        await callback.answer("🔢 الشراء بالجملة غير مفعّل.", show_alert=True)
         return
 
     parts = callback.data.split(":")
@@ -876,7 +876,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
 
     notifier = NotificationService(bot)
     await notifier.notify_admin(
-        "📦 <b>دفعة أرقام جديدة</b>\n\n"
+        "🔢 <b>دفعة أرقام جديدة</b>\n\n"
         f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
         f"{service.emoji} الخدمة: {service.name_ar}\n"
         f"🌍 الدولة: {country.flag} {country.name_ar}\n"

@@ -233,7 +233,7 @@ def confirm_purchase_kb(
         callback_data=f"num_confirm:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="primary",
     )
     b.button(
-        text="📦 شراء بالجملة",
+        text="🔢 شراء بالجملة",
         callback_data=f"num_bulk_start:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="success",
     )
     if server_id:

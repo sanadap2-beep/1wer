@@ -865,7 +865,7 @@ class Category(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name_ar: Mapped[str] = mapped_column(String(64))
-    emoji: Mapped[str] = mapped_column(String(8), default="📦")
+    emoji: Mapped[str] = mapped_column(String(8), default="🛍")
     type: Mapped[CategoryType] = mapped_column(SAEnum(CategoryType))
     # شرح القسم الذي يظهر للزبون عند فتحه (يُضبط من لوحة الأدمن).
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)

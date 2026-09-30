@@ -57,7 +57,7 @@ def order_created(
     return (
         "✅ تـم إنـشـاء طـلـبـك بـنـجـاح\n"
         f"{SEP}\n\n"
-        f"📦 الـمـنـتـج : {escape(product)}\n"
+        f"🛍 الـمـنـتـج : {escape(product)}\n"
         f"💰 الـسـعـر : {price_dual}\n"
         f"🔹 الـمـعـلـومـات الـمـدخـلـة:\n{target_label}: {escape(target)}\n"
         f"🔹 رقـم الـطـلـب :\n{escape(order_no)}\n"
@@ -74,7 +74,7 @@ def order_completed(
     return (
         "✅ تـم اكـتـمـال طـلـبـك بـنـجـاح!\n"
         f"{SEP}\n\n"
-        f"📦 الـمـنـتـج: {escape(product)}\n"
+        f"🛍 الـمـنـتـج: {escape(product)}\n"
         f"🔹 الـمـعـلـومـات الـمـدخـلـة:\n{target_label}: {escape(target)}\n"
         f"🔹 رقـم الـطـلـب:\n{escape(order_no)}\n"
         f"🕒 الـوقـت الـمـسـتـغـرق: {escape(elapsed)}\n"
@@ -92,7 +92,7 @@ def product_card(
         "⚫️ مـعـلـومـات الـخـدمـة :",
         SEP,
         f"🛍️ الخدمة: {escape(service)}",
-        f"📦 الـمـنـتـج: {escape(product)}",
+        f"🛍 الـمـنـتـج: {escape(product)}",
         f"🔢 الـكـمـيـة: {escape(qty_range)}",
         f"💵 الـسـعـر: {price_dual}",
     ]
@@ -116,7 +116,7 @@ def confirm_order(
     return (
         "⚡ تـأكـيـد الـطـلـب :\n"
         f"{SEP}\n\n"
-        f"📦 الـمـنـتـج : {escape(product)}\n"
+        f"🛍 الـمـنـتـج : {escape(product)}\n"
         f"🔢 الـكـمـيـة : {escape(str(qty))}\n\n"
         f"🆔 الـمـعـلـومـات الـمـدخـلـة:\n• {target_label} : {escape(target)}\n\n"
         f"💰 الـسـعـر الإجـمـالـي (قـبـل الـخـصـم) : {before_dual}\n"

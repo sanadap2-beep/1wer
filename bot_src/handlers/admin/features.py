@@ -297,7 +297,7 @@ async def _bulk_tiers_text() -> str:
 @router.callback_query(F.data == "feat_bulk_discounts")
 async def bulk_discounts_panel(callback: CallbackQuery):
     text = (
-        "📦 <b>إعداد خصومات الشراء بالجملة</b>\n\n"
+        "🔢 <b>إعداد خصومات الشراء بالجملة</b>\n\n"
         f"الشرائح الحالية:\n{await _bulk_tiers_text()}\n\n"
         "اختر قالباً جاهزاً أو عدّل الشرائح يدوياً."
     )

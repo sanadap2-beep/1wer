@@ -17,7 +17,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         [
             ("🚀 الإعداد السريع (3 خطوات)", "admin:quick_setup"),
             ("📞 إدارة خدمات الأرقام", "admin:number_services"),
-            ("📦 جلسات تلجرام الجاهزة (رفع ملف)", "admin:tg_ready"),
+            ("قسم ارقام تلجرام جاهزة (رفع ملف)", "admin:tg_ready"),
             ("📞 طلبات الأرقام", "admin:number_orders"),
             ("🌍 إدارة الدول", "admin:countries"),
             ("🌐 مزودو الأرقام", "admin:providers"),
@@ -92,7 +92,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     # اختصارات مراقبة لا تعيد ازدحام اللوحة، لكنها تحفظ الوصول السريع
     # لأكثر شاشتين يحتاجهما الأدمن يومياً.
     b.button(text="📱 خدمات الأرقام", callback_data="admin:number_services")
-    b.button(text="📦 الجلسات الجاهزة", callback_data="admin:tg_ready")
+    b.button(text="قسم ارقام تلجرام جاهزة", callback_data="admin:tg_ready")
     b.adjust(2)
     return b.as_markup()
 
@@ -406,7 +406,7 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
     )
     if getattr(service, "code", "") == "telegram":
         b.button(
-            text="📦 الجلسات الجاهزة (رفع ملف)",
+            text="قسم ارقام تلجرام جاهزة (رفع ملف)",
             callback_data="admin:tg_ready",
             style="success",
         )

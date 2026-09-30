@@ -64,7 +64,7 @@ def feature_detail_kb(spec: FeatureSpec, enabled: bool) -> InlineKeyboardMarkup:
         )
     if spec.key == "bulk_numbers":
         rows.append(
-            [InlineKeyboardButton(text="📦 إعداد خصومات الجملة", callback_data="feat_bulk_discounts")]
+            [InlineKeyboardButton(text="🔢 إعداد خصومات الجملة", callback_data="feat_bulk_discounts")]
         )
     rows.append(
         [InlineKeyboardButton(text="♻️ إعادة للقيم الافتراضية", callback_data=f"feat_reset:{spec.key}", style="danger")]

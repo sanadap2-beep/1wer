@@ -35,7 +35,7 @@ class MainButtonService:
 
     DEFAULT_BUTTONS = [
         MainMenuButton("store", "🛍 المتجر الشامل", "store:home", True, 10),
-        MainMenuButton("number_packages", "📦 باقات أرقام جاهزة", "num_packages", True, 20),
+        MainMenuButton("number_packages", "🔢 باقات أرقام جاهزة", "num_packages", True, 20),
     ]
 
     PRESETS = {
@@ -44,9 +44,9 @@ class MainButtonService:
         "instant": ("⚡ تسليم فوري", "store:section:instant"),
         "games": ("🎮 ألعاب", "store:section:games"),
         "smm": ("📈 سوشيال ميديا", "store:section:smm"),
-        "apps": ("📦 تطبيقات واشتراكات", "store:section:apps"),
+        "apps": ("📱 تطبيقات واشتراكات", "store:section:apps"),
         "cheap": ("💸 أقل من 2$", "store:section:cheap"),
-        "number_packages": ("📦 باقات أرقام جاهزة", "num_packages"),
+        "number_packages": ("🔢 باقات أرقام جاهزة", "num_packages"),
         "product_request": ("➕ اطلب منتج غير موجود", "menu:product_request"),
         "cart": ("🛒 السلة", "menu:cart"),
     }

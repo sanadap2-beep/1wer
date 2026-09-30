@@ -15,7 +15,7 @@ DEVELOPER_USERNAME = "@I8_ZU"
 def _info_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 شرح شراء الأرقام", callback_data="info:numbers", style="success")],
-        [InlineKeyboardButton(text="📦 شرح الجلسات الجاهزة", callback_data="info:sessions", style="success")],
+        [InlineKeyboardButton(text="🛍 شرح الجلسات الجاهزة", callback_data="info:sessions", style="success")],
         [InlineKeyboardButton(text="🛍 شرح المتجر (رشق/ألعاب/برامج/رصيد)", callback_data="info:store", style="success")],
         [InlineKeyboardButton(text="💳 كيف تشحن رصيدك", callback_data="info:deposit", style="primary")],
         [InlineKeyboardButton(text="👤 شرح حسابي", callback_data="info:account", style="primary")],
@@ -109,7 +109,7 @@ async def numbers_info(callback: CallbackQuery):
         "✅ <b>وصل الكود؟</b> انسخه وفعّل حسابك.\n"
         "↩️ <b>ما وصل؟</b> انتظر انتهاء المهلة ويرجع رصيدك لحاله.\n"
         "❌ <b>زر إلغاء:</b> إذا ما بدأ المزود بتجهيز الرقم فيك تلغي وتسترد رصيدك.\n\n"
-        "📦 <b>الشراء بالجملة:</b> إذا مفعّلة من الإدارة، فيك تشتري عدة أرقام بنفس الدولة والخدمة بضغطة وحدة، وأي رقم يفشل يرجع سعره تلقائياً.",
+        "🛍 <b>الشراء بالجملة:</b> إذا مفعّلة من الإدارة، فيك تشتري عدة أرقام بنفس الدولة والخدمة بضغطة وحدة، وأي رقم يفشل يرجع سعره تلقائياً.",
     )
 
 
@@ -117,9 +117,9 @@ async def numbers_info(callback: CallbackQuery):
 async def sessions_info(callback: CallbackQuery):
     await _safe_edit(
         callback,
-        "📦 <b>شرح جلسات تيليجرام الجاهزة</b>\n\n"
+        "🛍 <b>شرح ارقام تيليجرام الجاهزة</b>\n\n"
         "الجلسة = حساب تيليجرام جاهز بملفات دخول، تستلمها وتدخل بدون رقم.\n\n"
-        "1) اضغط <b>📦 جلسات تيليجرام الجاهزة</b> من القائمة.\n"
+        "1) اضغط <b>قسم ارقام تيليجرام الجاهزة</b> من القائمة.\n"
         "2) اختار الدولة / الفئة المتاحة وشوف السعر.\n"
         "3) أكّد الشراء — يخصم من رصيدك.\n"
         "4) يوصلك فوراً ملف <b>ZIP</b> فيه:\n"

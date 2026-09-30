@@ -93,7 +93,7 @@ async def daily_backup(bot):
         caption = (
             f"💾 <b>نسخة احتياطية تلقائية</b>\n\n"
             f"📅 التاريخ: {now.strftime('%Y-%m-%d %H:%M')} UTC\n"
-            f"📦 الحجم: {file_size_mb:.2f} MB\n"
+            f"📊 الحجم: {file_size_mb:.2f} MB\n"
             f"📂 الملف: {filename}"
         )
 
