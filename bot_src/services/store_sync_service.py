@@ -109,6 +109,7 @@ AR_TITLES: dict[str, str] = {
     "momo live": "مومو لايف",
     "yalla live": "يلا لايف",
     "syriatel": "سيريتل",
+    "mtn": "MTN",
     "alfa": "ألفا",
     "touch": "تاتش",
     "ludo club": "لودو كلوب",
