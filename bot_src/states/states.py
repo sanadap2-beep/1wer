@@ -306,6 +306,7 @@ class AdminStoreStates(StatesGroup):
     waiting_provider_name = State()
     waiting_provider_url = State()
     waiting_provider_key = State()
+    waiting_provider_key_edit = State()
     waiting_search = State()
     waiting_margin = State()
     waiting_category_name = State()

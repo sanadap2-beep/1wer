@@ -46,6 +46,7 @@ def _provider_kb(provider_id: int, is_active: bool) -> InlineKeyboardMarkup:
     toggle_style = "danger" if is_active else "success"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🩺 فحص الاتصال والرصيد", callback_data=f"admin:store_prov_test:{provider_id}", style="primary")],
+        [InlineKeyboardButton(text="🔑 تعديل مفتاح API", callback_data=f"admin:store_prov_key_edit:{provider_id}")],
         [InlineKeyboardButton(text="🔄 مزامنة الكتالوج", callback_data=f"admin:store_prov_sync:{provider_id}", style="success")],
         [InlineKeyboardButton(text=toggle_text, callback_data=f"admin:store_prov_toggle:{provider_id}", style=toggle_style)],
         [InlineKeyboardButton(text="🗑 حذف", callback_data=f"admin:store_prov_del:{provider_id}", style="danger")],
@@ -89,6 +90,72 @@ async def provider_view(callback: CallbackQuery, session):
         return
     await callback.message.edit_text(_provider_text(p), reply_markup=_provider_kb(p.id, p.is_active))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:store_prov_key_edit:"))
+async def provider_key_edit_start(callback: CallbackQuery, state: FSMContext, session):
+    provider_id = int(callback.data.rsplit(":", 1)[1])
+    provider = await DynamicService.get_provider(session, provider_id)
+    if not provider:
+        await callback.answer("⚠️ المزود غير موجود.", show_alert=True)
+        return
+
+    await state.clear()
+    await state.update_data(store_prov_key_provider_id=provider_id)
+    await state.set_state(AdminStoreStates.waiting_provider_key_edit)
+    await callback.message.edit_text(
+        f"🔑 <b>تعديل مفتاح API — {provider.name}</b>\n\n"
+        "أرسل المفتاح الجديد كنص. لن أعرضه بعد الحفظ.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ إلغاء", callback_data="admin:store_prov_key_edit_cancel", style="danger")]
+        ]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:store_prov_key_edit_cancel")
+async def provider_key_edit_cancel(callback: CallbackQuery, state: FSMContext, session):
+    await state.clear()
+    await providers_list(callback, session)
+
+
+@router.message(AdminStoreStates.waiting_provider_key_edit)
+async def provider_key_edit_received(message: Message, state: FSMContext, session):
+    api_key = (message.text or "").strip()
+    if not api_key:
+        await message.answer("⚠️ أرسل مفتاح API كنص.")
+        return
+
+    data = await state.get_data()
+    provider_id = data.get("store_prov_key_provider_id")
+    provider = await DynamicService.get_provider(session, provider_id) if provider_id else None
+    if not provider:
+        await state.clear()
+        await message.answer("⚠️ تعذر العثور على المزود. افتح قائمة مزودي المتجر وحاول مجدداً.")
+        return
+
+    await DynamicService.update_provider(
+        session,
+        provider_id,
+        api_key=api_key,
+        last_checked_at=None,
+        last_error=None,
+    )
+    await state.clear()
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    status_message = await message.answer("⏳ تم حفظ المفتاح. جاري فحص الاتصال والرصيد...")
+    ok, info = await _test_provider(session, provider_id)
+    provider = await DynamicService.get_provider(session, provider_id)
+    title = "✅ تم تحديث المفتاح" if ok else "⚠️ تم حفظ المفتاح لكن فشل فحص الاتصال"
+    text = f"{title} للمزود <b>{provider.name}</b>.\n\n{info}\n\n" + _provider_text(provider)
+    try:
+        await status_message.edit_text(text, reply_markup=_provider_kb(provider.id, provider.is_active))
+    except Exception:
+        await message.answer(text, reply_markup=_provider_kb(provider.id, provider.is_active))
 
 
 @router.callback_query(F.data.startswith("admin:store_prov_add:"))
