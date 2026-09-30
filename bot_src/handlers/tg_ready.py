@@ -30,14 +30,14 @@ async def tg_ready_list(callback: CallbackQuery, session, db_user=None):
     countries = await TgReadyService.stock_overview(session)
     if not countries:
         await callback.message.edit_text(
-            "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
+            "📱 <b>ارقام تلجرام جاهزة</b>\n\n"
             "❌ لا يوجد مخزون متاح حالياً.\nيرجى المحاولة لاحقاً.",
             reply_markup=back_to_main_kb(),
         )
         await callback.answer()
         return
     await callback.message.edit_text(
-        "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
+        "📱 <b>ارقام تلجرام جاهزة</b>\n\n"
         "اختر الدولة: السعر يشمل الحساب كاملاً مع بيانات الدخول.\n"
         "التسليم فوري والمخزون ينقص تلقائياً بعد كل شراء.",
         reply_markup=tg_ready_countries_kb(countries),
@@ -59,7 +59,7 @@ async def tg_ready_country(callback: CallbackQuery, session, db_user=None):
     await callback.message.edit_text(
         f"{entry['flag']} <b>{entry['name']}</b>\n\n"
         f"💰 <b>السعر:</b> <b>{price_display}</b>\n"
-        f"📦 <b>المتاح الآن:</b> <b>{entry['stock']}</b>\n\n"
+        f"📱 <b>المتاح الآن:</b> <b>{entry['stock']}</b>\n\n"
         "📎 <b>ستستلم:</b> الرقم + بيانات الجلسة (tdata/session) + كلمة 2FA إن وجدت.\n"
         "⚡️ التسليم فوري بعد التأكيد.",
         reply_markup=tg_ready_confirm_kb(key),
@@ -162,7 +162,7 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
         f"{item.flag} <b>{item.country_name_ar}</b>\n"
         f"📱 الرقم: <code>{item.phone_number}</code>\n"
         f"💰 السعر: <b>{price}$</b>\n"
-        f"📦 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
+        f"📱 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
         f"{how_to}\n\n"
         "⚠️ سجّل الدخول فوراً. الدعم خلال 24 ساعة للاستبدال.",
         reply_markup=tg_ready_owned_kb(item.id),
@@ -212,7 +212,7 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
     try:
         notifier = NotificationService(bot)
         await notifier.notify_admin(
-            "📦 <b>بيع جلسة جاهزة</b>\n\n"
+            "📱 <b>بيع رقم جاهز</b>\n\n"
             f"👤 {db_user.telegram_id} (@{db_user.username or '-'})\n"
             f"{item.flag} {item.country_name_ar}\n"
             f"📱 <code>{item.phone_number}</code>\n"

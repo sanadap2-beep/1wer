@@ -75,7 +75,7 @@ def partner_type_meta(type_key: str) -> tuple[str, str]:
     for key, emoji, label in PARTNER_TYPES:
         if key == type_key:
             return emoji, label
-    return "📦", type_key or "أخرى"
+    return "🛍", type_key or "أخرى"
 
 
 class PartnerV1Protocol(BaseProtocol):

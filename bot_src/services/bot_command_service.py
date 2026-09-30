@@ -250,7 +250,7 @@ class CockpitService:
             f"   أرصدة المستخدمين: {data['held_balance_usd']}$",
             f"   محجوز في ضمان: {data['escrow_held_usd']}$",
             "",
-            "📦 <b>الطلبات</b>",
+            "🛍 <b>الطلبات</b>",
             f"   أرقام معلّقة: {data['pending_numbers']}",
             f"   طلبات نشطة: {data['active_orders']}",
             f"   منتجات فعّالة: {data['active_products']}",

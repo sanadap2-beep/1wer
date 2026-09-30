@@ -28,6 +28,39 @@ router = Router(name="store")
 TARGET_NAMES = {"phone": "📱 رقم الهاتف", "player": "🎮 معرّف اللاعب", "link": "🔗 الرابط", "none": ""}
 TARGET_SHORT = {"phone": "رقم", "player": "User ID", "link": "رابط", "none": "الهدف"}
 
+PAGE_SIZE = 20
+
+
+async def _direct_product_count(session, sub_id: int) -> int:
+    from sqlalchemy import func as _func
+
+    result = await session.execute(
+        select(_func.count(Product.id)).where(
+            Product.sub_category_id == sub_id, Product.status == ProductStatus.ACTIVE)
+    )
+    return int(result.scalar_one() or 0)
+
+
+async def _sub_has_content(session, sub_id: int, depth: int = 2) -> bool:
+    """الفرع يستحق الظهور؟ فيه منتجات مفعّلة أو فروع ناشطة تحته."""
+    if await _direct_product_count(session, sub_id) > 0:
+        return True
+    if depth <= 0:
+        return False
+    result = await session.execute(select(SubCategory.id).where(
+        SubCategory.parent_sub_category_id == sub_id, SubCategory.is_active.is_(True)))
+    for (child_id,) in result.all():
+        if await _sub_has_content(session, int(child_id), depth - 1):
+            return True
+    return False
+
+
+async def _visible_children(session, parent_id: int) -> list:
+    result = await session.execute(select(SubCategory).where(
+        SubCategory.parent_sub_category_id == parent_id,
+        SubCategory.is_active.is_(True)).order_by(SubCategory.sort_order, SubCategory.id))
+    return [s for s in result.scalars().all() if await _sub_has_content(session, s.id)]
+
 
 async def _lux_ctx(session, db_user):
     """(سعر الصرف ل.س، سطر الرتبة أو None) لرسائل Lux."""
@@ -50,9 +83,13 @@ def _back_home() -> list:
 
 
 async def _home_kb(session, db_user=None) -> InlineKeyboardMarkup:
+    # المتجر = 4 أقسام فقط: ألعاب / تطبيقات / رشق / أرصدة
     result = await session.execute(
         select(Category)
-        .where(Category.is_active.is_(True), Category.type != CategoryType.NUMBERS)
+        .where(
+            Category.is_active.is_(True),
+            Category.type.in_([CategoryType.GAMES, CategoryType.APPS, CategoryType.SMM, CategoryType.BALANCES]),
+        )
         .order_by(Category.sort_order, Category.id)
     )
     cats = list(result.scalars().all())
@@ -90,16 +127,38 @@ async def store_home(callback: CallbackQuery, session, state: FSMContext, db_use
 @router.callback_query(F.data.startswith("store:cat:"))
 async def store_cat(callback: CallbackQuery, session, state: FSMContext):
     await state.clear()
-    cid = int(callback.data.rsplit(":", 1)[1])
+    parts = callback.data.split(":")
+    cid = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
     cat = await DynamicService.get_category(session, cid)
     if not cat or not cat.is_active:
         await callback.answer("⚠️ القسم غير متوفر.", show_alert=True)
         return
     subs = await DynamicService.get_active_root_sub_categories(session, cid)
+    subs = [s for s in subs if await _sub_has_content(session, s.id)]
     if not subs:
         await callback.answer("⚠️ لا توجد فروع بعد.", show_alert=True)
         return
-    rows = [[InlineKeyboardButton(text=f"{s.emoji} {s.name_ar}", callback_data=f"store:sub:{s.id}", style="success")] for s in subs]
+    total_pages = max(1, (len(subs) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = subs[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for s in chunk:
+        pair.append(InlineKeyboardButton(text=f"{s.emoji} {s.name_ar}", callback_data=f"store:sub:{s.id}", style="success"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀ السابق", callback_data=f"store:cat:{cid}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="التالي ▶", callback_data=f"store:cat:{cid}:{page + 1}"))
+        rows.append(nav)
     rows.append([InlineKeyboardButton(text="🔙 المتجر", callback_data="store:home", style="success")])
     await callback.message.edit_text(
         f"{cat.emoji} <b>{cat.name_ar}</b>\n\n{cat.description or 'اختر الفرع:'}",
@@ -111,31 +170,62 @@ async def store_cat(callback: CallbackQuery, session, state: FSMContext):
 @router.callback_query(F.data.startswith("store:sub:"))
 async def store_sub(callback: CallbackQuery, session, state: FSMContext):
     await state.clear()
-    sid = int(callback.data.rsplit(":", 1)[1])
+    parts = callback.data.split(":")
+    sid = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 else 0
     sub = await DynamicService.get_sub_category(session, sid)
     if not sub or not sub.is_active:
         await callback.answer("⚠️ غير متوفر.", show_alert=True)
         return
-    children = await DynamicService.get_active_child_sections(session, sid)
-    products = [p for p in (sub.products or []) if p.status == ProductStatus.ACTIVE]
+    children = await _visible_children(session, sid)
+    # المنتجات: 20 بكل صفحة (صفين)
+    from sqlalchemy import func as _func
+
+    total_result = await session.execute(select(_func.count(Product.id)).where(
+        Product.sub_category_id == sid, Product.status == ProductStatus.ACTIVE))
+    total = int(total_result.scalar_one() or 0)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    prod_result = await session.execute(select(Product).where(
+        Product.sub_category_id == sid, Product.status == ProductStatus.ACTIVE
+    ).order_by(Product.sort_order, Product.id).limit(PAGE_SIZE).offset(page * PAGE_SIZE))
+    products = list(prod_result.scalars().all())
+
     rows: list[list[InlineKeyboardButton]] = []
     text = f"{sub.emoji} <b>{sub.name_ar}</b>\n"
     if sub.description:
         text += f"\n{sub.description}\n"
     if children:
         text += "\nاختر النوع:"
+        crow: list[InlineKeyboardButton] = []
         for ch in children:
-            rows.append([InlineKeyboardButton(text=f"{ch.emoji} {ch.name_ar}", callback_data=f"store:sub:{ch.id}", style="success")])
+            crow.append(InlineKeyboardButton(text=f"{ch.emoji} {ch.name_ar}", callback_data=f"store:sub:{ch.id}", style="success"))
+            if len(crow) == 2:
+                rows.append(crow)
+                crow = []
+        if crow:
+            rows.append(crow)
     if products:
-        if children:
-            text += "\n\nمنتجات مباشرة:"
-        else:
-            text += "\nاختر المنتج:"
+        text += "\n\nاختر المنتج:" if children else "\nاختر المنتج:"
+        prow: list[InlineKeyboardButton] = []
         for p in products:
-            rows.append([InlineKeyboardButton(
-                text=f"📦 {p.name_ar[:35]} — {p.price_usd}$",
+            prow.append(InlineKeyboardButton(
+                text=f"{p.name_ar[:28]} — {p.price_usd}$",
                 callback_data=f"store:prod:{p.id}", style="success",
-            )])
+            ))
+            if len(prow) == 2:
+                rows.append(prow)
+                prow = []
+        if prow:
+            rows.append(prow)
+        if total_pages > 1:
+            nav: list[InlineKeyboardButton] = []
+            if page > 0:
+                nav.append(InlineKeyboardButton(text="◀ السابق", callback_data=f"store:sub:{sid}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+            if page < total_pages - 1:
+                nav.append(InlineKeyboardButton(text="التالي ▶", callback_data=f"store:sub:{sid}:{page + 1}"))
+            rows.append(nav)
     if not children and not products:
         text += "\n⚠️ لا توجد منتجات هنا بعد."
     back = f"store:sub:{sub.parent_sub_category_id}" if sub.parent_sub_category_id else f"store:cat:{sub.category_id}"
@@ -161,7 +251,7 @@ async def store_product(callback: CallbackQuery, session, db_user, state: FSMCon
     avg, count = await product_rating(session, p.id)
     price_display = await CurrencyService.format_dual(p.price_usd, db_user, session)
     lines = [
-        f"📦 <b>{p.name_ar}</b>\n",
+        f"🛍 <b>{p.name_ar}</b>\n",
         f"💰 السعر: <b>{price_display}</b>",
     ]
     if count:
@@ -212,7 +302,7 @@ async def store_buy(callback: CallbackQuery, session, state: FSMContext, db_user
         from services.message_style import SEP
 
         await callback.message.edit_text(
-            f"📦 <b>{p.name_ar}</b>\n\n{hint}\n\n"
+            f"🛍 <b>{p.name_ar}</b>\n\n{hint}\n\n"
             f"👇🏻 أدخـل {TARGET_SHORT.get(kind, 'الـهـدف')}\n{SEP}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="❌ إلغاء", callback_data=f"store:prod:{pid}", style="danger")]
@@ -254,7 +344,7 @@ async def _ask_quantity(message, state, session, p, ps, edit: bool, db_user=None
         if row:
             rows.append(row)
         rows.append([InlineKeyboardButton(text="❌ إلغاء", callback_data=f"store:prod:{p.id}", style="danger")])
-        text = f"📦 <b>{p.name_ar}</b>\n\nاختر الفئة ({len(opts)} فئة متاحة):"
+        text = f"🛍 <b>{p.name_ar}</b>\n\nاختر الفئة ({len(opts)} فئة متاحة):"
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         # إبقاء البيانات مع تصفير الحالة: الاختيار عبر الأزرار فقط
         try:
@@ -272,7 +362,7 @@ async def _ask_quantity(message, state, session, p, ps, edit: bool, db_user=None
     if p.requires_quantity:
         await state.set_state(StoreStates.waiting_quantity)
         text = (
-            f"📦 <b>{p.name_ar}</b>\n\n"
+            f"🛍 <b>{p.name_ar}</b>\n\n"
             f"📊 أرسل الكمية المطلوبة (من {p.min_quantity} إلى {p.max_quantity}):"
         )
         if edit:
@@ -339,7 +429,6 @@ async def _show_confirm(message, state, session, p, edit: bool, db_user=None):
         [InlineKeyboardButton(text="🧺 أضف للسلة بدل الشراء", callback_data=f"store:cart_add:{p.id}", style="success")],
         [InlineKeyboardButton(text="❌ إلغاء", callback_data=f"store:prod:{p.id}", style="danger")],
     ])
-    text = "\n".join(l for l in lines if l)
     if edit:
         try:
             await message.edit_text(text, reply_markup=kb)

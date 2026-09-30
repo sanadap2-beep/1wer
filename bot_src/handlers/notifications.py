@@ -9,7 +9,7 @@ router = Router(name="notifications")
 
 _LABELS = {
     "all": "الكل",
-    "order": "📦 الطلبات",
+    "order": "🛍 الطلبات",
     "payment": "💳 الدفع",
     "withdrawal": "💸 السحب",
     "market": "🏪 السوق",
@@ -24,7 +24,7 @@ _LABELS = {
 def _home_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🔔 كل الإشعارات", callback_data="notif:list:all")],
-        [InlineKeyboardButton(text="📦 الطلبات", callback_data="notif:list:order", style="primary"), InlineKeyboardButton(text="💳 المالية", callback_data="notif:list:payment", style="primary")],
+        [InlineKeyboardButton(text="🛍 الطلبات", callback_data="notif:list:order", style="primary"), InlineKeyboardButton(text="💳 المالية", callback_data="notif:list:payment", style="primary")],
         [InlineKeyboardButton(text="🏪 السوق", callback_data="notif:list:market"), InlineKeyboardButton(text="🔥 العروض", callback_data="notif:list:promotion", style="primary")],
         [InlineKeyboardButton(text="⚙️ إعدادات الإشعارات", callback_data="notif:prefs")],
         [InlineKeyboardButton(text="✅ تعليم الكل كمقروء", callback_data="notif:read_all")],

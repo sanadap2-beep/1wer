@@ -456,7 +456,7 @@ class NotificationService:
         text = (
             "🏪 <b>تمت بيعة ناجحة في سوق المستخدمين!</b>\n\n"
             f"👤 التاجر: <b>{seller_alias}</b>\n"
-            f"📦 المعروض: {listing_title}\n"
+            f"🛍 المعروض: {listing_title}\n"
             f"💰 القيمة: {price_usd}$\n"
             f"📅 التاريخ: {now} UTC\n\n"
             "✅ تم تأكيد العملية بنجاح عبر ضمان البوت."
@@ -629,7 +629,7 @@ class NotificationService:
             "✅ <b>مباشر البوت — شراء مكتمل</b>\n\n"
             f"👤 المستخدم: <code>{telegram_id}</code> "
             f"{f'(@{esc(username)})' if username else ''} {esc(name[:40])}\n"
-            f"📦 المنتج: {esc(item)}\n"
+            f"🛍 المنتج: {esc(item)}\n"
             f"💰 خُصم من رصيده: <b>{amount_usd}$</b>"
         )
         if order_id is not None:
@@ -655,7 +655,7 @@ class NotificationService:
             "↩️ <b>مباشر البوت — استرجاع رصيد</b>\n\n"
             f"👤 المستخدم: <code>{telegram_id}</code> "
             f"{f'(@{esc(username)})' if username else ''} {esc(name[:40])}\n"
-            f"📦 المنتج: {esc(item)}\n"
+            f"🛍 المنتج: {esc(item)}\n"
             f"💵 المبلغ المسترجع: <b>{amount_usd}$</b>\n"
             f"📄 السبب: {esc(reason)}"
         )

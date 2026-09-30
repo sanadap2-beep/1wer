@@ -130,7 +130,7 @@ async def main_button_target_type(callback: CallbackQuery, state: FSMContext, se
         products = list(result.scalars().all())
         await state.set_state(AdminMainButtonStates.choosing_product)
         await callback.message.edit_text(
-            "📦 اختر المنتج الذي سيفتحه الزر:",
+            "🛍 اختر المنتج الذي سيفتحه الزر:",
             reply_markup=target_products_kb(products),
         )
     elif target_type == "internal":
@@ -276,7 +276,7 @@ async def main_button_add_product(callback: CallbackQuery, session, db_user):
     if product is None:
         await callback.answer("المنتج غير موجود.", show_alert=True)
         return
-    button = await MainButtonService.add(session, f"📦 {product.name_ar}", f"prod:{product.id}")
+    button = await MainButtonService.add(session, f"🛍 {product.name_ar}", f"prod:{product.id}")
     await AuditService.log(
         admin_id=db_user.id,
         action=AuditAction.CREATE,

@@ -54,7 +54,7 @@ def tg_ready_entry_kb(total: int) -> InlineKeyboardMarkup:
     """زر الدخول للقسم الجاهز من داخل صفحة تلجرام OTP."""
     b = InlineKeyboardBuilder()
     b.button(
-        text=f"📦 حسابات جاهزة — جلسات (متاح {total})",
+        text=f"📱 ارقام تلجرام جاهزة (متاح {total})",
         callback_data="tgready:list",
     )
     b.adjust(1)

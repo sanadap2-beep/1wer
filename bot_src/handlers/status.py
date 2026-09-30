@@ -60,7 +60,7 @@ async def _render_status(target, session, db_user=None):
             "\n━━━ 📊 الكتالوج ━━━",
             f"📂 الأقسام الفعالة: {active_categories}",
             f"📞 خدمات الأرقام الفعالة: {active_services}",
-            f"📦 المنتجات الفعالة: {active_products}",
+            f"🛍 المنتجات الفعالة: {active_products}",
             "",
             f"🕐 آخر تحديث للصفحة: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
             "يتم إيقاف الخدمة تلقائياً إذا اكتشف النظام أنها غير متاحة.",

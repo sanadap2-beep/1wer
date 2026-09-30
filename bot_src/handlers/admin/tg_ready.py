@@ -1,6 +1,6 @@
 """إدارة الجلسات الجاهزة من لوحة الأدمن: رفع ملف + نسبة ربح + أسعار الدول.
 
-التدفق: زر «📦 جلسات تلجرام الجاهزة» -> يعرض المخزون المفرز تلقائياً
+التدفق: زر «📱 ارقام تلجرام جاهزة» -> يعرض المخزون المفرز تلقائياً
 -> «📤 رفع ملف» -> يسأل عن نسبة الربح % -> يسأل عن تكلفة الحساب $
 -> يطلب الملف (txt/csv/zip) -> يفرز الدول (اسم+علم+سعر) ويجهزها للبيع.
 """
@@ -32,7 +32,7 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
     total = await TgReadyService.total_available(session)
     if not countries:
         text = (
-            "📦 <b>جلسات تلجرام الجاهزة</b>\n\n"
+            "📱 <b>ارقام تلجرام جاهزة</b>\n\n"
             "لا يوجد مخزون بعد.\n\n"
             "اضغط «📤 رفع ملف أرقام جديد» وأرسل ملف <code>.txt</code> أو "
             "<code>.csv</code> أو <code>.zip</code> — صيغة المورّد المدعومة:\n"
@@ -46,7 +46,7 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
         )
     else:
         lines = [
-            "📦 <b>جلسات تلجرام الجاهزة — المخزون المفرز تلقائياً</b>\n",
+            "📱 <b>ارقام تلجرام جاهزة — المخزون المفرز تلقائياً</b>\n",
             f"📊 الإجمالي المتاح: <b>{total}</b> | 💰 الربح الافتراضي: <b>{margin}%</b>\n",
         ]
         for c in countries:
@@ -199,7 +199,7 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
             "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الزبون بيستلم الرقم + رابط "
             "الكود (إن وُجد بالسطر) + 2FA وبيدخل بالرقم والكود."
         )
-    lines.append("\nالزبون الآن يرى هذه الدول بقسم أرقام تلجرام ← 📦 حسابات جاهزة.")
+    lines.append("\nالزبون الآن يرى هذه الدول بقسم أرقام تلجرام ← 📱 ارقام جاهزة.")
     await message.answer("\n".join(lines))
     text, countries, total, margin_s = await _home_text(session)
     await message.answer(text, reply_markup=admin_tg_ready_kb(countries, total, margin_s))
@@ -263,7 +263,7 @@ async def tg_ready_country_view(callback: CallbackQuery, session):
         f"{country.flag} <b>{country.name_ar}</b>\n\n"
         f"🔑 المفتاح: <code>{country.country_key}</code>\n"
         f"💰 السعر: <b>{country.price_usd}$</b> (تكلفة {country.last_cost_usd}$ + ربح {country.margin_percent}%)\n"
-        f"📦 المخزون المتاح: <b>{stock}</b>\n"
+        f"📱 المخزون المتاح: <b>{stock}</b>\n"
         f"👁 الظهور: {'🟢 ظاهر' if country.is_active else '⚪ مخفي'}",
         reply_markup=admin_tg_ready_country_kb(key, country.is_active),
     )

@@ -37,7 +37,7 @@ CAT_TYPES: list[tuple[str, str]] = [
     ("اشتراكات 🔐", "subscriptions"),
     ("توثيق ✅", "verification"),
     ("أكواد 🎟", "codes"),
-    ("مخصص 📦", "custom"),
+    ("مخصص 📁", "custom"),
 ]
 
 
@@ -179,7 +179,7 @@ async def product_view(callback: CallbackQuery, session):
         flags.append(f"كمية ({p.min_quantity}-{p.max_quantity})")
     prov = f"{p.api_provider.name} [{p.provider_service_id}]" if p.api_provider else "يدوي/بدون مزود"
     text = (
-        f"📦 <b>{p.name_ar}</b>\n\n"
+        f"🛍 <b>{p.name_ar}</b>\n\n"
         f"الحالة: {'🟢 مفعّل' if p.status.value == 'active' else '⚪ معطّل'}\n"
         f"💰 البيع: <b>{p.price_usd}$</b> | التكلفة: {p.cost_price_usd}$\n"
         f"💵 الهامش: <b>{margin}</b>\n"
@@ -225,7 +225,7 @@ async def cat_type_received(callback: CallbackQuery, state: FSMContext, session)
     code = callback.data.rsplit(":", 1)[1]
     data = await state.get_data()
     name = data.get("store_cat_name", "قسم جديد")
-    emoji = {"smm": "📈", "games": "🎮", "apps": "📱", "balances": "💳"}.get(code, "📦")
+    emoji = {"smm": "📈", "games": "🎮", "apps": "📱", "balances": "💳"}.get(code, "🛍")
     cat = await DynamicService.create_category(
         session, name_ar=name, emoji=emoji,
         category_type=CategoryType(code), sort_order=50,
@@ -259,7 +259,7 @@ async def sub_name_received(message: Message, state: FSMContext, session):
     parent = int(data.get("store_sub_parent", 0)) or None
     sub = await DynamicService.create_sub_category(
         session, category_id=int(data["store_sub_cat"]),
-        name_ar=message.text.strip()[:64], emoji="📦",
+        name_ar=message.text.strip()[:64], emoji="🛍",
         parent_sub_category_id=parent, sort_order=10,
     )
     await state.clear()

@@ -52,7 +52,7 @@ def main_button_target_types_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📂 قسم رئيسي", callback_data="mb:type:category")],
             [InlineKeyboardButton(text="📁 قسم فرعي", callback_data="mb:type:subcategory")],
-            [InlineKeyboardButton(text="📦 منتج", callback_data="mb:type:product")],
+            [InlineKeyboardButton(text="🛍 منتج", callback_data="mb:type:product")],
             [InlineKeyboardButton(text="⚡ صفحة داخلية جاهزة", callback_data="mb:type:internal")],
             [InlineKeyboardButton(text="🌐 رابط خارجي", callback_data="mb:type:url")],
             [InlineKeyboardButton(text="✍️ كتابة الإجراء يدوياً", callback_data="mb:type:manual")],
@@ -68,7 +68,7 @@ def main_button_action_help_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔥 عروض اليوم", callback_data="mb:action:store:section:deals")],
             [InlineKeyboardButton(text="🎮 ألعاب", callback_data="mb:action:store:section:games")],
             [InlineKeyboardButton(text="📈 سوشيال", callback_data="mb:action:store:section:smm")],
-            [InlineKeyboardButton(text="📦 تطبيقات", callback_data="mb:action:store:section:apps")],
+            [InlineKeyboardButton(text="📱 تطبيقات", callback_data="mb:action:store:section:apps")],
             [InlineKeyboardButton(text="⬅️ إلغاء", callback_data="admin:main_buttons")],
         ]
     )
@@ -97,7 +97,7 @@ def target_products_kb(products) -> InlineKeyboardMarkup:
     for product in products[:40]:
         name = product.name_ar if len(product.name_ar) <= 34 else product.name_ar[:33] + "…"
         rows.append([
-            InlineKeyboardButton(text=f"📦 {name} · ID {product.id}", callback_data=f"mb:pick:prod:{product.id}")
+            InlineKeyboardButton(text=f"🛍 {name} · ID {product.id}", callback_data=f"mb:pick:prod:{product.id}")
         ])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="mb:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

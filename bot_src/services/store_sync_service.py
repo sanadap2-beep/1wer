@@ -35,7 +35,28 @@ from database.models import (
 logger = logging.getLogger(__name__)
 
 
-# ── تعيين أسماء أقسام HyperStore لأنواعنا ──
+# ── أقسام المتجر الأربعة فقط ──
+
+# الأنواع المعروضة داخل المتجر (4 أقسام فقط)
+STORE_VISIBLE_TYPES = (CategoryType.GAMES, CategoryType.APPS, CategoryType.SMM, CategoryType.BALANCES)
+
+
+async def hide_unwanted_store_categories(session) -> int:
+    """يعطّل كل أقسام المتجر خارج الأقسام الأربعة (الأرقام تبقى).
+
+    الإخفاء لا الحذف — يمكن إعادة التفعيل من اللوحة.
+    """
+    result = await session.execute(select(Category))
+    n = 0
+    for cat in result.scalars().all():
+        if cat.type in (CategoryType.NUMBERS,) + STORE_VISIBLE_TYPES:
+            continue
+        if cat.is_active:
+            cat.is_active = False
+            n += 1
+    if n:
+        await session.commit()
+    return n
 
 _HYPER_TYPE_KEYWORDS: list[tuple[str, CategoryType, str]] = [
     ("العاب", CategoryType.GAMES, "🎮"),
@@ -61,7 +82,57 @@ def hyper_category_type(name: str) -> tuple[CategoryType, str]:
     for keyword, ctype, emoji in _HYPER_TYPE_KEYWORDS:
         if keyword in lowered:
             return ctype, emoji
-    return CategoryType.CUSTOM, "📦"
+    return CategoryType.CUSTOM, "🛍"
+
+
+# ── تعريب عناوين الفروع الإنجليزية ──
+
+AR_TITLES: dict[str, str] = {
+    "pubg mobile": "ببجي موبايل",
+    "pubg global auto": "ببجي عالمي تلقائي",
+    "pubg memberships": "عضويات ببجي",
+    "pubg new state": "ببجي نيو ستيت",
+    "pubg syria": "ببجي سوريا",
+    "free fire": "فري فاير",
+    "mobile legend": "موبايل ليجند",
+    "jawaker": "جواكر",
+    "8ball pool": "بلياردو 8",
+    "delta force": "دلتا فورس",
+    "blood strike": "بلود سترايك",
+    "efootball": "إي فوتبول",
+    "brawl stars": "براول ستارز",
+    "clash of clans": "كلاش أوف كلانس",
+    "كلاش اوف كلانس": "كلاش أوف كلانس",
+    "arena breakout": "أرينا بريك آوت",
+    "age of empires mobile": "عصر الإمبراطوريات",
+    "mixu": "ميكسو",
+    "momo live": "مومو لايف",
+    "yalla live": "يلا لايف",
+    "syriatel": "سيريتل",
+    "alfa": "ألفا",
+    "touch": "تاتش",
+    "itunes": "آيتونز",
+    "google play": "جوجل بلاي",
+    "play station": "بلايستيشن",
+    "steam": "ستيم",
+    "x box": "إكس بوكس",
+    "amazon": "أمازون",
+    "razer gold": "ريزر جولد",
+}
+
+
+def _has_arabic(text: str) -> bool:
+    return any("؀" <= c <= "ۿ" for c in (text or ""))
+
+
+def localize_title(name: str) -> str:
+    """اسم عربي للعرض: من القاموس، أو الأصل إن كان عربياً، أو الأصل كما هو."""
+    name = (name or "").strip()
+    if not name:
+        return "قسم"
+    if _has_arabic(name):
+        return name[:64]
+    return AR_TITLES.get(name.lower(), name[:64])
 
 
 # ── تطبيقات الرشق الثمانية (seed جاهز) ──
@@ -306,8 +377,10 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
             products = payload.get("products", []) or []
 
             if local_parent_cat is None and local_parent_sub is None:
-                # قسم جذري → Category
+                # قسم جذري → Category (الأقسام الأربعة فقط — الباقي يُتجاهل)
                 ctype, emoji = hyper_category_type(name)
+                if ctype not in (CategoryType.GAMES, CategoryType.APPS, CategoryType.BALANCES):
+                    continue
                 mapped = tree_map.get(ext_id)
                 cat = None
                 if mapped and mapped.get("kind") == "cat":
@@ -354,16 +427,18 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
                     if parent_cat is None and local_parent_sub is not None:
                         parent_row = await session.get(SubCategory, local_parent_sub)
                         parent_cat = parent_row.category_id if parent_row else None
+                    # الاسم معرّب عند الإنشاء
                     sub = await DynamicService.create_sub_category(
                         session, category_id=int(parent_cat or 0),
-                        name_ar=name[:64], emoji="📦",
+                        name_ar=localize_title(name), emoji="📁",
                         parent_sub_category_id=local_parent_sub,
                         sort_order=order,
                     )
                     report.subs_added += 1
                 else:
-                    if sub.name_ar != name[:64]:
-                        sub.name_ar = name[:64]
+                    # لا نمس تعديل الأدمن العربي — نعرّب الأجنبي فقط
+                    if not _has_arabic(sub.name_ar or ""):
+                        sub.name_ar = localize_title(name)
                         await session.commit()
                     report.subs_updated += 1
                 tree_map[ext_id] = {"kind": "sub", "id": sub.id}
@@ -378,6 +453,12 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
         provider.last_sync_at = datetime.utcnow()
         provider.last_error = None
         await session.commit()
+        try:
+            hidden = await hide_unwanted_store_categories(session)
+            if hidden:
+                logger.info("أُخفي %s قسماً خارج الأقسام الأربعة.", hidden)
+        except Exception:
+            pass
     except Exception as exc:
         logger.exception("فشل مزامنة HyperStore")
         report.error = str(exc)[:200]
@@ -407,7 +488,7 @@ async def _ensure_general_sub(session, category_id: int) -> SubCategory:
     from services.dynamic_service import DynamicService
 
     return await DynamicService.create_sub_category(
-        session, category_id=category_id, name_ar="عام", emoji="📦", sort_order=999,
+        session, category_id=category_id, name_ar="عام", emoji="📁", sort_order=999,
     )
 
 
@@ -584,6 +665,16 @@ async def publish_product(
     margin = margin_percent if margin_percent is not None else Decimal("50")
     sell = (cost * (Decimal("100") + margin) / Decimal("100"))
     # للفئات الثابتة (dropdown): السعر يُحسب عند اختيار الفئة — نخزن سعر الوحدة
+    # الوصف: من المزود، أو مولّد من بيانات الخدمة (مهم لخدمات SMM بلا وصف)
+    desc = (ps.description or "").strip()
+    if not desc:
+        bits = [ps.name]
+        if ps.category:
+            bits.append(f"التصنيف: {ps.category}")
+        bits.append(f"الحدود: {ps.min_quantity}-{ps.max_quantity}")
+        if ps.supports_refill:
+            bits.append("♻️ يدعم إعادة التعبئة")
+        desc = " | ".join(bits)
     product = await DynamicService.create_product(
         session,
         sub_category_id=sub_category_id,
@@ -593,7 +684,7 @@ async def publish_product(
         api_provider_id=ps.api_provider_id,
         provider_service_id=ps.external_service_id,
         provider_service_ref_id=ps.id,
-        description=(ps.description or "")[:500],
+        description=desc[:500],
         min_quantity=min_quantity if min_quantity is not None else 1,
         max_quantity=1 if extra.get("quantity_options") else max(1, ps.max_quantity),
         requires_player_id=requires_player,
