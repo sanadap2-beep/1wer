@@ -111,6 +111,22 @@ AR_TITLES: dict[str, str] = {
     "syriatel": "سيريتل",
     "alfa": "ألفا",
     "touch": "تاتش",
+    "ludo club": "لودو كلوب",
+    "لودو clud": "لودو كلوب",
+    "yalla ludo": "يلا لودو",
+    "honor of king": "أونر أوف كينغ",
+    "genshin impact": "قنشن إمباكت",
+    "genshen impact": "قنشن إمباكت",
+    "honkai : star rail": "هونكاي ستار ريل",
+    "whiteout survival": "وايت أوت سرفايفل",
+    "stumble guys": "ستامبل جايز",
+    "super sus": "سوبر ساس",
+    "farlight84": "فارلايت 84",
+    "brawl stars": "براول ستارز",
+    "mobile legend": "موبايل ليجند",
+    "8ball pool": "بلياردو",
+    "free fire": "فري فاير",
+    "pubg mobile": "ببجي موبايل",
     "itunes": "آيتونز",
     "google play": "جوجل بلاي",
     "play station": "بلايستيشن",
@@ -135,7 +151,123 @@ def localize_title(name: str) -> str:
     return AR_TITLES.get(name.lower(), name[:64])
 
 
-# ── تطبيقات الرشق الثمانية (seed جاهز) ──
+# ── الأقسام الأربعة الثابتة + أشهر 20 لعبة بسوريا ──
+
+SECTION_ROOT_NAMES: dict[CategoryType, tuple[str, str]] = {
+    CategoryType.GAMES: ("شحن الألعاب", "🎮"),
+    CategoryType.APPS: ("شحن البرامج", "📱"),
+    CategoryType.BALANCES: ("الأرصدة", "💳"),
+    CategoryType.SMM: ("الرشق", "📈"),
+}
+
+# كلمات مطابقة لأشهر 20 لعبة (بالترتيب) — الباقي يُخفى (قابل للتفعيل يدوياً)
+TOP_GAMES_ORDER: list[str] = [
+    "pubg mobile", "free fire", "jawaker", "efootball", "mobile legend",
+    "brawl stars", "clash", "8ball", "yalla ludo", "ludo",
+    "delta force", "blood strike", "honor of king", "genshin", "genshen",
+    "honkai", "whiteout", "stumble", "super sus", "farlight", "arena breakout",
+]
+
+ORIGINAL_ROOT_NAMES = {
+    "الألعاب", "الالعاب", "التطبيقات", "قسم الأرصدة", "قسم الارصدة",
+    "رشق سوشيال ميديا", "رشق",
+}
+
+
+async def normalize_section_roots(session) -> int:
+    """يوحد أسماء الأقسام الأربعة (إنشاءً وتحديثاً للأسماء الأصلية فقط)."""
+    from services.dynamic_service import DynamicService
+
+    changed = 0
+    result = await session.execute(select(Category))
+    for cat in result.scalars().all():
+        wanted = SECTION_ROOT_NAMES.get(cat.type)
+        if not wanted:
+            continue
+        if cat.name_ar != wanted[0] and (cat.name_ar in ORIGINAL_ROOT_NAMES or not _has_arabic(cat.name_ar or "")):
+            cat.name_ar = wanted[0]
+            cat.emoji = wanted[1]
+            changed += 1
+    if changed:
+        await session.commit()
+    # قسم الرشق إن لم يوجد
+    smm = await session.execute(select(Category).where(Category.type == CategoryType.SMM))
+    if smm.scalar_one_or_none() is None:
+        await DynamicService.create_category(
+            session, name_ar="الرشق", emoji="📈",
+            category_type=CategoryType.SMM, sort_order=1,
+        )
+        changed += 1
+    return changed
+
+
+async def prioritize_top_games(session) -> dict:
+    """يُبقي أشهر 20 لعبة مرتبة ويخفي الباقي (عكسي من اللوحة)."""
+    result = await session.execute(select(Category).where(Category.type == CategoryType.GAMES))
+    cats = list(result.scalars().all())
+    stats = {"kept": 0, "hidden": 0}
+    for cat in cats:
+        subs_result = await session.execute(select(SubCategory).where(
+            SubCategory.category_id == cat.id,
+            SubCategory.parent_sub_category_id.is_(None)))
+        subs = list(subs_result.scalars().all())
+        ranked: list[tuple[int, SubCategory]] = []
+        used: set[int] = set()
+        for idx, keyword in enumerate(TOP_GAMES_ORDER):
+            for sub in subs:
+                if sub.id in used:
+                    continue
+                if keyword in (sub.name_ar or "").lower():
+                    ranked.append((idx, sub))
+                    used.add(sub.id)
+                    break
+        for order, (idx, sub) in enumerate(sorted(ranked)):
+            sub.sort_order = (order + 1) * 10
+            if not sub.is_active:
+                sub.is_active = True
+            stats["kept"] += 1
+        for sub in subs:
+            if sub.id not in used and sub.is_active:
+                sub.is_active = False
+                stats["hidden"] += 1
+        await session.commit()
+    return stats
+
+
+async def flush_store(session, delete_services: bool = False) -> dict:
+    """🧹 تفريغ المتجر: حذف الأقسام/الفروع/المنتجات (الأرقام تُمسّ أبداً).
+
+    - يحذف كل Category ما عدا NUMBERS (مع cascade للفروع والمنتجات).
+    - يمسح خرائط الشجرة store_tree_*.
+    - delete_services=True يحذف أيضاً خدمات المزود المسحوبة (سحب جديد بعدها).
+    """
+    from services.settings_service import SettingsService
+
+    stats = {"cats": 0, "products": 0, "services": 0}
+    result = await session.execute(select(Category))
+    for cat in list(result.scalars().all()):
+        if cat.type == CategoryType.NUMBERS:
+            continue
+        prod_result = await session.execute(
+            select(Product).join(SubCategory, Product.sub_category_id == SubCategory.id).where(
+                SubCategory.category_id == cat.id)
+        )
+        stats["products"] += len(list(prod_result.scalars().all()))
+        await session.delete(cat)
+        stats["cats"] += 1
+    await session.commit()
+    # مسح خرائط الشجرة
+    all_settings = await SettingsService.get_all()
+    for key in list(all_settings.keys()):
+        if key.startswith("store_tree_"):
+            await SettingsService.set(session, key, "{}")
+    if delete_services:
+        svc_result = await session.execute(select(ProviderService))
+        for row in list(svc_result.scalars().all()):
+            await session.delete(row)
+            stats["services"] += 1
+        await session.commit()
+    return stats
 
 SMM_APPS: list[tuple[str, str, str, list[str]]] = [
     # (الاسم العربي، الإيموجي، kind_key، كلمات المطابقة)
@@ -394,14 +526,18 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
                 if cat is None:
                     from services.dynamic_service import DynamicService
 
+                    fixed = SECTION_ROOT_NAMES.get(ctype)
                     cat = await DynamicService.create_category(
-                        session, name_ar=name[:64], emoji=emoji,
+                        session, name_ar=fixed[0] if fixed else name[:64],
+                        emoji=fixed[1] if fixed else emoji,
                         category_type=ctype, sort_order=order,
                     )
                     report.categories_added += 1
                 else:
-                    if cat.name_ar != name[:64]:
-                        cat.name_ar = name[:64]
+                    # لا نمس تعديل الأدمن — نطبع الاسم الثابت للأسماء الأصلية فقط
+                    fixed = SECTION_ROOT_NAMES.get(ctype)
+                    if fixed and cat.name_ar in ORIGINAL_ROOT_NAMES:
+                        cat.name_ar, cat.emoji = fixed
                         await session.commit()
                     report.categories_updated += 1
                 tree_map[ext_id] = {"kind": "cat", "id": cat.id}
@@ -576,9 +712,13 @@ async def ensure_smm_structure(session) -> tuple[Category, list[SubCategory]]:
     cat = result.scalar_one_or_none()
     if cat is None:
         cat = await DynamicService.create_category(
-            session, name_ar="رشق سوشيال ميديا", emoji="📈",
+            session, name_ar="الرشق", emoji="📈",
             category_type=CategoryType.SMM, sort_order=1,
         )
+    elif cat.name_ar != "الرشق":
+        cat.name_ar = "الرشق"
+        cat.emoji = "📈"
+        await session.commit()
     subs: list[SubCategory] = []
     for i, (name_ar, emoji, kind, _keywords) in enumerate(SMM_APPS):
         existing = await session.execute(

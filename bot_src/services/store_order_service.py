@@ -370,3 +370,123 @@ async def check_store_orders(bot) -> dict:
                 order.status_message = f"تنفيذ جزئي (المتبقي: {st.remains})"
                 await session.commit()
     return stats
+
+
+FIND_MARGIN = Decimal("20")
+
+
+async def direct_quote(
+    session, provider_service_id: int, qty: str
+) -> tuple[ProviderService, ApiProvider, str, Decimal, Decimal, list[str]]:
+    """تسعيرة طلب مباشر (بحث): (الخدمة، المزود، نوع الهدف، التكلفة، البيع+20%، الخيارات).
+
+    Raises ValueError on problems.
+    """
+    ps = await session.get(ProviderService, provider_service_id)
+    if ps is None:
+        raise ValueError("الخدمة غير موجودة")
+    provider = await session.get(ApiProvider, ps.api_provider_id)
+    if provider is None or not provider.is_active:
+        raise ValueError("مزود الخدمة غير متوفر حالياً")
+    try:
+        extra = json.loads(ps.raw_data or "{}")
+    except Exception:
+        extra = {}
+    kind = extra.get("target_kind", "link")
+    if kind == "none" and ps.requires_player_id:
+        kind = "player"
+    options = extra.get("quantity_options") or []
+    try:
+        qty_dec = Decimal(str(qty))
+    except (InvalidOperation, ValueError):
+        raise ValueError("كمية غير صالحة")
+    if ps.price_type == ProviderPriceType.PER_1000:
+        cost = ps.rate_usd * qty_dec / Decimal("1000")
+    else:
+        cost = ps.rate_usd * qty_dec
+    _cost, sell = compute_prices(cost, FIND_MARGIN)
+    return ps, provider, kind, cost, sell, options
+
+
+async def place_direct_order(
+    session, bot, db_user, provider_service_id: int, target: str, qty: str
+) -> tuple[UnifiedOrder | None, str]:
+    """طلب مباشر من نتيجة بحث (هامش ثابت 20%). يرجع (الطلب، رسالة)."""
+    from services.balance_service import BalanceService
+    from services.notification_service import NotificationService
+
+    try:
+        ps, provider, kind, cost, sell, _options = await direct_quote(session, provider_service_id, qty)
+    except ValueError as exc:
+        return None, f"⚠️ {exc}"
+    if sell <= 0:
+        return None, "⚠️ سعر غير صالح."
+
+    ok, target_or_err = validate_target(kind, target)
+    if not ok:
+        return None, target_or_err
+
+    notifier = NotificationService(bot)
+    try:
+        await BalanceService.deduct_balance(
+            session, db_user.id, sell, TransactionType.PURCHASE,
+            description=f"طلب مباشر: {ps.name[:60]}",
+            related_table="provider_services", related_id=ps.id, is_purchase=True,
+        )
+    except Exception as exc:
+        from services.balance_service import InsufficientBalanceError
+
+        if isinstance(exc, InsufficientBalanceError):
+            return None, f"❌ رصيدك غير كافٍ. المطلوب <b>{sell}$</b>."
+        raise
+
+    from protocols.factory import ProtocolFactory
+
+    try:
+        protocol = ProtocolFactory.create_from_provider(provider)
+        placed = await protocol.place_order(
+            service_id=str(ps.external_service_id), target=target_or_err, quantity=str(qty),
+        )
+    except Exception as exc:
+        await BalanceService.add_balance(
+            session, db_user.id, sell, TransactionType.REFUND,
+            description=f"استرجاع طلب مباشر: {ps.name[:60]}",
+        )
+        logger.exception("فشل طلب مباشر لدى المزود")
+        return None, f"❌ تعذّر التنفيذ لدى المزود.\nتم استرجاع <b>{sell}$</b>.\n<code>{str(exc)[:150]}</code>"
+
+    external = (placed.raw.get("order_code") if isinstance(placed.raw, dict) else None) or placed.external_order_id
+    try:
+        qty_int = int(Decimal(str(qty))) if Decimal(str(qty)) == int(Decimal(str(qty))) else 1
+    except Exception:
+        qty_int = 1
+    order = UnifiedOrder(
+        user_id=db_user.id,
+        product_id=None,
+        api_provider_id=provider.id,
+        external_order_id=str(external)[:64],
+        target=target_or_err[:500] if target_or_err else None,
+        quantity=qty_int,
+        price_usd=sell,
+        cost_price_usd=cost,
+        status=UnifiedOrderStatus.PROCESSING,
+        status_message="طلب مباشر — قيد التنفيذ",
+        result_data=json.dumps({
+            "qty": str(qty), "provider_order_id": placed.external_order_id,
+            "direct": True, "provider_service_ref": ps.id,
+        }, ensure_ascii=False),
+    )
+    session.add(order)
+    await session.commit()
+
+    from services.message_style import dual as _dual, order_created as _created
+    from services.settings_service import SettingsService as _SS2
+
+    _rate = await _SS2.get_decimal("usd_to_syp_rate", Decimal("130"))
+    _tlabel = {"phone": "رقم", "player": "User ID", "link": "رابط"}.get(kind, "الهدف")
+    await notifier.notify_user(
+        db_user.telegram_id,
+        _created(ps.name[:60], _dual(sell, _rate), _tlabel, target_or_err or "—",
+                 str(external) if external else f"#{order.id}"),
+    )
+    return order, "ok"

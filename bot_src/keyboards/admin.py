@@ -59,6 +59,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("📤 نشر من المزود", "admin:store_publish"),
             ("🌳 إنشاء الأقسام من المزود", "admin:store_autotree"),
             ("⚡ تجهيز أقسام الرشق", "admin:store_smm_setup"),
+            ("🧹 تفريغ المتجر", "admin:store_flush"),
         ],
     ),
     "system": (

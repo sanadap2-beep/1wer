@@ -316,6 +316,14 @@ class StoreStates(StatesGroup):
     waiting_coupon = State()
 
 
+class StoreFindStates(StatesGroup):
+    """بحث «ما لقيت لعبتك»: الاستعلام ثم الهدف ثم الكمية."""
+
+    waiting_query = State()
+    waiting_target = State()
+    waiting_quantity = State()
+
+
 class AdminStoreSetupStates(StatesGroup):
     """معالج تجهيز قسم متجر: نسبة الربح ثم التنفيذ."""
 
