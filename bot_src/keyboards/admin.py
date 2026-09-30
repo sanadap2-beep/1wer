@@ -51,7 +51,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "🛍 المتجر (رشق/ألعاب/برامج/رصيد)",
         [
             ("🎮 تجهيز قسم شحن الألعاب", "admin:setup:games"),
-            ("📱 تجهيز اشتراكات التطبيقات", "admin:setup:apps"),
+            ("📱 تجهيز شحن البرامج والاشتراكات", "admin:setup:apps"),
             ("💳 تجهيز قسم الأرصدة", "admin:setup:balances"),
             ("📈 تجهيز قسم الرشق", "admin:setup:smm"),
             ("🔌 مزودو المتجر", "admin:store_providers"),

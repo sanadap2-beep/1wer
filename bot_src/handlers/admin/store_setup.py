@@ -2,7 +2,7 @@
 ⚡ معالج تجهيز أقسام المتجر — زر لكل قسم.
 
 - 🎮 تجهيز قسم شحن الألعاب (كل الألعاب بفروعها الداخلية)
-- 📱 تجهيز قسم اشتراكات التطبيقات
+- 📱 تجهيز قسم شحن البرامج والاشتراكات
 - 💳 تجهيز قسم الأرصدة (سيريتل + MTN)
 - 📈 تجهيز قسم الرشق (8 تطبيقات × خدمات × منتجات)
 
@@ -34,8 +34,8 @@ SECTIONS: dict[str, dict] = {
         "hyper": True,
     },
     "apps": {
-        "title": "📱 تجهيز قسم اشتراكات التطبيقات",
-        "desc": "اشتراكات التطبيقات المسحوبة بفروعها — أسماء عربية وأسعار بعد هامشك.",
+        "title": "📱 تجهيز قسم شحن البرامج والاشتراكات",
+        "desc": "برامج واشتراكات المزود المسحوبة بفروعها — أسماء عربية وأسعار بعد هامشك.",
         "hyper": True,
     },
     "balances": {
@@ -86,7 +86,7 @@ async def setup_start(callback: CallbackQuery, session, state: FSMContext):
         )
         await callback.answer()
         return
-    if not provider.total_services:
+    if cfg["hyper"] and not provider.total_services:
         await callback.message.edit_text(
             f"{cfg['title']}\n\n⚠️ كتالوج المزود فارغ — اعمل 🔄 مزامنة الكتالوج أولاً من صفحة المزود.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -170,6 +170,28 @@ async def setup_margin_received(message: Message, state: FSMContext, session):
             )
             stats = await setup_hyper_section(session, provider.id, section, margin)
         else:
+            from services.store_sync_service import sync_provider
+
+            sync_report = await sync_provider(session, provider)
+            if sync_report.error:
+                raise RuntimeError(
+                    f"❌ تعذرت مزامنة كتالوج {escape(provider.name)}: "
+                    f"<code>{escape(sync_report.error[:250])}</code>. لم أنشر خدمات من كتالوج قديم."
+                )
+            if sync_report.failed:
+                raise RuntimeError(
+                    f"❌ لم يكتمل حفظ كتالوج {escape(provider.name)}؛ "
+                    f"فشل حفظ {sync_report.failed} خدمة. لم أتابع النشر حتى تبقى الخيارات مطابقة للمزود."
+                )
+            if not sync_report.total_services:
+                raise RuntimeError(
+                    f"⚠️ لم يُرجع مزود {escape(provider.name)} أي خدمة متاحة؛ "
+                    "لم أنشر منتجات من بيانات قديمة. افحص اتصال المزود ثم أعد المحاولة."
+                )
+            await status.edit_text(
+                f"✅ تم تحديث كتالوج المزود ({sync_report.total_services} خدمة حالية).\n"
+                f"⏳ جاري تجهيز {cfg['title']} بهامش {margin}%..."
+            )
             stats = await setup_smm_section(session, provider.id, margin)
         text = format_stats(stats)
         ready_count = sum(

@@ -31,7 +31,7 @@ BACK_MAIN = InlineKeyboardMarkup(inline_keyboard=[
 CAT_TYPES: list[tuple[str, str]] = [
     ("رشق سوشيال 📈", "smm"),
     ("شحن ألعاب 🎮", "games"),
-    ("اشتراكات التطبيقات 📱", "apps"),
+    ("شحن البرامج والاشتراكات 📱", "apps"),
     ("رصيد/شحن 💳", "balances"),
     ("بطاقات رقمية 💳", "cards"),
     ("اشتراكات 🔐", "subscriptions"),

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from html import escape
 
 from sqlalchemy import select
 
@@ -17,7 +18,9 @@ from database.models import (
     Category,
     CategoryType,
     Product,
+    ProductStatus,
     ProviderService,
+    ProviderServiceStatus,
     SubCategory,
 )
 from services.store_sync_service import (
@@ -26,15 +29,17 @@ from services.store_sync_service import (
     existing_product_for_service,
     publish_product,
     refresh_published_price,
-    suggest_smm_app,
+    suggest_smm_service_app,
     suggest_smm_kind,
 )
 
 SECTION_TYPES: dict[str, tuple[str, tuple[CategoryType, ...]]] = {
     "games": ("🎮 شحن الألعاب", (CategoryType.GAMES,)),
-    "apps": ("📱 اشتراكات التطبيقات", (CategoryType.APPS,)),
+    "apps": ("📱 شحن البرامج والاشتراكات", (CategoryType.APPS,)),
     "balances": ("💳 الأرصدة", (CategoryType.BALANCES,)),
 }
+
+SMM_PACK_OPTIONS = (100, 250, 500, 750, 1000, 2000, 5000, 10000, 25000, 50000, 100000, 500000)
 
 
 def _balance_wanted(sub_name: str) -> bool:
@@ -43,6 +48,71 @@ def _balance_wanted(sub_name: str) -> bool:
     return (
         "سيريت" in n or "سيريتل" in n or "SYRIATEL" in up or up.strip() == "MTN"
     )
+
+
+def _select_smm_tiers(
+    items: list,
+    floor: Decimal,
+    margin: Decimal,
+    min_sell: Decimal,
+) -> tuple[list, list, int]:
+    """يعيد حتى 3 اقتصادية و3 مميزة من خدمات المزود المؤهلة دون تكرار."""
+    sane = [
+        svc for svc in items
+        if svc.rate_usd >= floor
+        and int(svc.min_quantity or 1) >= 1
+        and int(svc.max_quantity or 0) >= int(svc.min_quantity or 1)
+        and (
+            svc.rate_usd * (Decimal("100") + margin) / Decimal("100") >= Decimal("0.50")
+            or any(
+                int(svc.min_quantity or 1) <= quantity <= int(svc.max_quantity or 0)
+                and svc.rate_usd * (Decimal("100") + margin) / Decimal("100")
+                * Decimal(quantity) / Decimal("1000") >= min_sell
+                for quantity in SMM_PACK_OPTIONS
+            )
+        )
+    ]
+    sane.sort(key=lambda svc: (svc.rate_usd, str(svc.external_service_id)))
+    economic = sane[:3]
+    economic_ids = {svc.id for svc in economic}
+    refill = [svc for svc in sane if svc.supports_refill and svc.id not in economic_ids]
+    premium = refill[:3]
+    premium_ids = {svc.id for svc in premium}
+    if len(premium) < 3:
+        rest = [svc for svc in reversed(sane) if svc.id not in economic_ids | premium_ids]
+        premium.extend(rest[: 3 - len(premium)])
+    return economic, premium, len(sane)
+
+
+def _instagram_follower_description(service, tier: str) -> str:
+    """وصف عربي يوضح الفئة والحدود وخصائص خدمة المزود الفعلية."""
+    if tier == "اقتصادي":
+        tier_text = "خيار اقتصادي من خدمات المزود، مختار ضمن الأقل سعراً."
+    elif service.supports_refill:
+        tier_text = "خيار مميز، وخدمة المزود تدعم إعادة التعبئة."
+    else:
+        tier_text = "خيار مميز بسعر أعلى ضمن الخدمات المتاحة لدى المزود."
+    refill_text = "متاحة" if service.supports_refill else "غير متاحة"
+    description = (
+        f"خدمة متابعين لحساب إنستغرام. {tier_text} "
+        f"الكمية المسموحة: من {int(service.min_quantity or 1)} إلى "
+        f"{int(service.max_quantity or 1)}. إعادة التعبئة {refill_text}."
+    )
+    provider_description = (service.description or "").strip()
+    if provider_description:
+        prefix = "\nتفاصيل المزود: "
+        description += prefix
+        budget = max(0, 295 - len(description))
+        escaped_detail: list[str] = []
+        used = 0
+        for char in provider_description:
+            safe_char = escape(char)
+            if used + len(safe_char) > budget:
+                break
+            escaped_detail.append(safe_char)
+            used += len(safe_char)
+        description += "".join(escaped_detail)
+    return description
 
 
 async def setup_hyper_section(
@@ -182,20 +252,27 @@ async def setup_smm_section(
     stats = {
         "new": 0, "refreshed": 0, "existing": 0, "relinked": 0,
         "skipped_dust": 0, "skipped": 0, "title": "📈 الرشق",
+        "instagram_followers_available": 0,
+        "instagram_followers_selected": 0,
+        "instagram_followers_deactivated": 0,
     }
     _cat, app_subs = await ensure_smm_structure(session)
     result = await session.execute(
-        select(ProviderService).where(ProviderService.api_provider_id == provider_id)
+        select(ProviderService).where(
+            ProviderService.api_provider_id == provider_id,
+            ProviderService.status == ProviderServiceStatus.ACTIVE,
+        )
     )
     smm_services = list(result.scalars().all())
     kind_ar = dict(SMM_KINDS)
+    instagram_follower_service_ids: set[int] = set()
 
     for app_sub in app_subs:
         app_kind, app_ar = app_sub.kind_key, app_sub.name_ar
-        cands = [s for s in smm_services if suggest_smm_app(f"{s.category or ''} {s.name}") == app_kind]
+        cands = [s for s in smm_services if suggest_smm_service_app(s) == app_kind]
         by_kind: dict[str, list] = {}
         for s in cands:
-            k = suggest_smm_kind(f"{s.category or ''} {s.name}")
+            k = suggest_smm_kind(f"{s.category or ''} {s.name} {s.description or ''}")
             if k in ("followers", "likes", "views"):
                 by_kind.setdefault(k, []).append(s)
         if not by_kind:
@@ -204,17 +281,12 @@ async def setup_smm_section(
         for kind, items in by_kind.items():
             # 6 لكل نوع: 3 اقتصادي (الأرخص الموثوق فوق الأرضية) + 3 مميز (Refill أولاً)
             # أرضية ضد الخدمات الوهمية الرخيصة ($/ألف) — المشاهدات رخيصة بطبعها
-            floors = {"followers": Decimal("0.20"), "likes": Decimal("0.10"), "views": Decimal("0.005")}
+            floors = {"followers": Decimal("0.01"), "likes": Decimal("0.10"), "views": Decimal("0.005")}
             floor = floors.get(kind, Decimal("0.01"))
-            sane = [s for s in items if s.rate_usd >= floor and int(s.min_quantity or 1) >= 1]
-            sane.sort(key=lambda s: s.rate_usd)
-            eco = sane[:3]
-            refill = [s for s in sane if s.supports_refill]
-            refill.sort(key=lambda s: s.rate_usd)
-            pro = [s for s in refill if s not in eco][:3]
-            if len(pro) < 3:
-                rest = [s for s in reversed(sane) if s not in eco and s not in pro]
-                pro += rest[:3 - len(pro)]
+            eco, pro, available = _select_smm_tiers(items, floor, margin, min_sell)
+            is_instagram_followers = app_kind == "instagram" and kind == "followers"
+            if is_instagram_followers:
+                stats["instagram_followers_available"] = available
             picks = [("اقتصادي 💰", s) for s in eco] + [("مميز ⭐", s) for s in pro]
             rc = await session.execute(select(SubCategory).where(
                 SubCategory.category_id == app_sub.category_id,
@@ -228,36 +300,68 @@ async def setup_smm_section(
                     parent_sub_category_id=app_sub.id,
                     kind_key=f"{app_kind}:{kind}", sort_order=5,
                 )
+            tier_numbers = {"اقتصادي 💰": 0, "مميز ⭐": 0}
+            product_index = 0
             for tag, svc in picks:
+                if is_instagram_followers:
+                    tier_name = tag.split()[0]
+                    tier_numbers[tag] += 1
+                    product_index += 1
+                    product_name = f"متابعو إنستغرام — {tier_name} {tier_numbers[tag]}"
+                    product_description = _instagram_follower_description(svc, tier_name)
+                    product_sort_order = product_index * 10
+                else:
+                    product_name = None
+                    product_description = None
+                    product_sort_order = 0
                 existing = await existing_product_for_service(session, svc.id)
                 if existing:
-                    if existing.sub_category_id != child.id:
-                        await DynamicService.update_product(
-                            session, existing.id, sub_category_id=child.id
+                    was_relinked = existing.sub_category_id != child.id
+                    updates = {}
+                    if was_relinked:
+                        updates["sub_category_id"] = child.id
+                    if is_instagram_followers:
+                        updates.update(
+                            name_ar=product_name[:128],
+                            description=product_description,
+                            status=ProductStatus.ACTIVE,
+                            sort_order=product_sort_order,
                         )
-                        stats["relinked"] += 1
+                    if updates:
+                        await DynamicService.update_product(session, existing.id, **updates)
+                        if was_relinked:
+                            stats["relinked"] += 1
                     if await refresh_published_price(session, existing, margin):
                         stats["refreshed"] += 1
                     else:
                         stats["existing"] += 1
+                    if is_instagram_followers:
+                        instagram_follower_service_ids.add(svc.id)
+                        stats["instagram_followers_selected"] += 1
                     continue
                 # الاسم: النوع + التطبيق + الفئة + لمحة من وصف المزود
                 hint = (svc.name or "").strip()
                 for drop in (app_sub.name_ar, kind_ar.get(kind, kind)):
                     hint = hint.replace(drop, "")
                 hint = " ".join(hint.split())[:45]
-                name = f"{kind_ar.get(kind, kind)} {app_ar} ({tag})"
-                if hint:
+                name = product_name or f"{kind_ar.get(kind, kind)} {app_ar} ({tag})"
+                if hint and not is_instagram_followers:
                     name = f"{name} — {hint}"
                 sell_1k = svc.rate_usd * (Decimal("100") + margin) / Decimal("100")
                 if sell_1k >= Decimal("0.50"):
                     await publish_product(
                         session, svc.id, child.id, margin_percent=margin,
-                        name_ar=name, min_quantity=max(int(svc.min_quantity or 1), 100),
+                        name_ar=name,
+                        min_quantity=max(
+                            int(svc.min_quantity or 1),
+                            min(100, int(svc.max_quantity)),
+                        ),
+                        description=product_description,
+                        sort_order=product_sort_order,
                     )
                 else:
                     pack = None
-                    for cand in (1000, 2000, 5000, 10000, 25000, 50000, 100000, 500000):
+                    for cand in SMM_PACK_OPTIONS:
                         if cand < int(svc.min_quantity or 1) or cand > int(svc.max_quantity or 0):
                             continue
                         if sell_1k * Decimal(cand) / Decimal("1000") >= min_sell:
@@ -271,12 +375,40 @@ async def setup_smm_section(
                     prod = await publish_product(
                         session, svc.id, child.id, margin_percent=margin,
                         name_ar=f"{name} — باقة {pack}", min_quantity=pack,
+                        description=product_description,
+                        sort_order=product_sort_order,
                     )
                     await DynamicService.update_product(
                         session, prod.id, max_quantity=pack, requires_quantity=False,
                         price_usd=pack_price, cost_price_usd=pack_cost,
                     )
                 stats["new"] += 1
+                if is_instagram_followers:
+                    instagram_follower_service_ids.add(svc.id)
+                    stats["instagram_followers_selected"] += 1
+    # أوقف الخدمات القديمة أو المنتمية فعلياً لمنصة أخرى التي كانت منشورة
+    # خطأً تحت متابعي إنستغرام. المنتجات المختارة من الكتالوج الحالي فقط تبقى ظاهرة.
+    instagram_app = next((sub for sub in app_subs if sub.kind_key == "instagram"), None)
+    if instagram_app is not None:
+        follower_result = await session.execute(select(SubCategory).where(
+            SubCategory.category_id == instagram_app.category_id,
+            SubCategory.parent_sub_category_id == instagram_app.id,
+            SubCategory.kind_key == "instagram:followers",
+        ))
+        follower_sub = follower_result.scalar_one_or_none()
+        if follower_sub is not None:
+            products_result = await session.execute(select(Product).where(
+                Product.sub_category_id == follower_sub.id,
+                Product.api_provider_id == provider_id,
+                Product.provider_service_ref_id.is_not(None),
+                Product.status == ProductStatus.ACTIVE,
+            ))
+            for product in products_result.scalars().all():
+                if product.provider_service_ref_id not in instagram_follower_service_ids:
+                    product.status = ProductStatus.INACTIVE
+                    stats["instagram_followers_deactivated"] += 1
+            if stats["instagram_followers_deactivated"]:
+                await session.commit()
     return stats
 
 
@@ -291,6 +423,23 @@ def format_stats(stats: dict) -> str:
         lines.append(f"📦 منتجات موجودة دون تغيير: <b>{stats['existing']}</b>")
     if stats.get("relinked"):
         lines.append(f"🔗 منتجات أُعيد ربطها بفرعها الصحيح: <b>{stats['relinked']}</b>")
+    if "instagram_followers_selected" in stats:
+        selected = int(stats.get("instagram_followers_selected", 0) or 0)
+        available = int(stats.get("instagram_followers_available", 0) or 0)
+        lines.append(
+            f"📸 متابعو إنستغرام: <b>{selected}/6</b> منتجاً من "
+            f"<b>{available}</b> خدمة مؤهلة موجودة بكتالوج المزود"
+        )
+        if selected < 6:
+            lines.append(
+                "⚠️ المزود لا يوفّر حالياً ست خدمات متابعين مؤهلة؛ "
+                "لم أضف خدمات بديلة من فيسبوك أو تيليجرام."
+            )
+        if stats.get("instagram_followers_deactivated"):
+            lines.append(
+                f"🧹 أُخفيت خدمات قديمة من هذا القسم: "
+                f"<b>{stats['instagram_followers_deactivated']}</b>"
+            )
     if stats.get("games_active") is not None:
         lines.append(
             f"🎮 فروع الألعاب المفعّلة: <b>{stats['games_active']}</b> "

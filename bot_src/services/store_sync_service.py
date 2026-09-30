@@ -27,6 +27,7 @@ from database.models import (
     Category,
     CategoryType,
     Product,
+    ProductStatus,
     ProviderService,
     ProviderServiceStatus,
     ProviderPriceType,
@@ -233,7 +234,7 @@ def localize_title(name: str) -> str:
 
 SECTION_ROOT_NAMES: dict[CategoryType, tuple[str, str]] = {
     CategoryType.GAMES: ("شحن الألعاب", "🎮"),
-    CategoryType.APPS: ("اشتراكات التطبيقات", "📱"),
+    CategoryType.APPS: ("شحن البرامج والاشتراكات", "📱"),
     CategoryType.BALANCES: ("الأرصدة", "💳"),
     CategoryType.SMM: ("الرشق", "📈"),
 }
@@ -242,7 +243,7 @@ ORIGINAL_ROOT_NAMES = {
     "الألعاب", "الالعاب", "التطبيقات", "قسم الأرصدة", "قسم الارصدة",
     "رشق سوشيال ميديا", "رشق", "شحن البرامج", "شحن التطبيقات",
     "شحن برامج", "البرامج", "برامج", "اشتراكات البرامج",
-    "تطبيقات واشتراكات",
+    "تطبيقات واشتراكات", "اشتراكات التطبيقات",
 }
 
 
@@ -328,15 +329,15 @@ async def flush_store(session, delete_services: bool = False) -> dict:
     return stats
 
 SMM_APPS: list[tuple[str, str, str, list[str]]] = [
-    # (الاسم العربي، الإيموجي، kind_key، كلمات المطابقة)
-    ("انستقرام", "📸", "instagram", ["instagram", "insta", "ig ", " ig", "انستا"]),
-    ("تيك توك", "🎵", "tiktok", ["tiktok", "tik tok", "تيك توك"]),
-    ("يوتيوب", "▶️", "youtube", ["youtube", "youtu", "يوتيوب"]),
-    ("تيليجرام", "✈️", "telegram", ["telegram", "تيليجرام", "تليجرام"]),
-    ("فيسبوك", "👥", "facebook", ["facebook", "fb ", " فيس"]),
+    # (الاسم العربي، الإيموجي، kind_key، أسماء المنصة المعروفة)
+    ("انستقرام", "📸", "instagram", ["instagram", "insta", "ig", "انستا", "انستقرام", "انستغرام", "انستجرام"]),
+    ("تيك توك", "🎵", "tiktok", ["tiktok", "tik tok", "تيك توك", "تيكتوك"]),
+    ("يوتيوب", "▶️", "youtube", ["youtube", "يوتيوب"]),
+    ("تيليجرام", "✈️", "telegram", ["telegram", "تيليجرام", "تليجرام", "تلجرام"]),
+    ("فيسبوك", "👥", "facebook", ["facebook", "fb", "فيسبوك", "فيس بوك", "فيس"]),
     ("واتساب", "💬", "whatsapp", ["whatsapp", "wts", "واتساب", "واتس اب"]),
-    ("سناب شات", "👻", "snapchat", ["snapchat", "snap", "سناب"]),
-    ("تويتر", "🐦", "twitter", ["twitter", " x ", "تويتر", "اكس"]),
+    ("سناب شات", "👻", "snapchat", ["snapchat", "snap", "سناب شات", "سناب"]),
+    ("تويتر", "🐦", "twitter", ["twitter", "تويتر", "اكس"]),
 ]
 
 SMM_KINDS: list[tuple[str, str]] = [
@@ -350,12 +351,40 @@ SMM_KINDS: list[tuple[str, str]] = [
 ]
 
 
-def suggest_smm_app(text: str) -> str | None:
-    """kind_key التطبيق المقترح لخدمة SMM حسب اسمها/تصنيفها."""
-    lowered = (text or "").lower()
+def smm_app_matches(text: str) -> set[str]:
+    """منصات SMM المذكورة صراحةً في نص الخدمة، مع حدود للكلمات الإنجليزية."""
+    lowered = (text or "").casefold()
+    matches: set[str] = set()
     for _name_ar, _emoji, kind, keywords in SMM_APPS:
-        if any(k in lowered for k in keywords):
-            return kind
+        for keyword in keywords:
+            term = keyword.casefold().strip()
+            if not term:
+                continue
+            if all(ord(char) < 128 for char in term):
+                found = re.search(
+                    rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])",
+                    lowered,
+                )
+            else:
+                found = term in lowered
+            if found:
+                matches.add(kind)
+                break
+    return matches
+
+
+def suggest_smm_app(text: str) -> str | None:
+    """يرجع منصة واحدة فقط؛ النص المختلط لا يُصنف على منصة عشوائياً."""
+    matches = smm_app_matches(text)
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def suggest_smm_service_app(service) -> str | None:
+    """يقدم اسم الخدمة على تصنيف المزود، لأن فئات بعض المزودين غير دقيقة."""
+    for text in (service.name, service.description, service.category):
+        matches = smm_app_matches(text or "")
+        if matches:
+            return next(iter(matches)) if len(matches) == 1 else None
     return None
 
 
@@ -484,6 +513,7 @@ async def upsert_provider_service(
         existing.name = svc.name[:500]
         existing.category = (svc.category or "")[:255] or existing.category
         existing.service_type = (svc.service_type or "")[:64] or existing.service_type
+        existing.description = (getattr(svc, "description", None) or "").strip() or None
         existing.rate = rate
         existing.rate_usd = rate_usd
         existing.min_quantity = int(svc.min_quantity or 1)
@@ -493,6 +523,7 @@ async def upsert_provider_service(
         existing.requires_player_id = bool(svc.requires_player_id)
         existing.supports_refill = bool(svc.supports_refill)
         existing.supports_cancel = bool(svc.supports_cancel)
+        existing.status = ProviderServiceStatus.ACTIVE
         existing.raw_data = raw_json
         report.services_updated += 1
         await session.commit()
@@ -503,6 +534,7 @@ async def upsert_provider_service(
         name=svc.name[:500],
         category=(svc.category or "")[:255],
         service_type=(svc.service_type or "")[:64],
+        description=(getattr(svc, "description", None) or "").strip() or None,
         rate=rate,
         rate_usd=rate_usd,
         price_type=price_type,
@@ -759,14 +791,37 @@ async def _store_hyper_product(
 async def sync_smm(session, provider: ApiProvider) -> StoreSyncReport:
     report = StoreSyncReport(provider_name=provider.name)
     protocol = _protocol_for(provider)
+    catalog_loaded = False
+    services = []
     try:
         services = await protocol.get_services()
+        catalog_loaded = True
+        seen_service_ids: set[str] = set()
         for svc in services:
             try:
                 await upsert_provider_service(session, provider, svc, ProviderPriceType.PER_1000, report)
+                seen_service_ids.add(str(svc.external_id))
             except Exception:
                 logger.exception("فشل حفظ خدمة SMM %s", svc.external_id)
                 report.failed += 1
+        # لا نوقف خدمات قديمة إلا بعد اكتمال حفظ رد المزود. عندها الخدمات
+        # الغائبة لم تعد متاحة، ومنتجاتها لا تبقى قابلة للشراء.
+        if report.failed == 0:
+            stored = await session.execute(
+                select(ProviderService).where(ProviderService.api_provider_id == provider.id)
+            )
+            removed_service_ids = []
+            for row in stored.scalars().all():
+                if row.external_service_id not in seen_service_ids:
+                    row.status = ProviderServiceStatus.DELETED_FROM_PROVIDER
+                    removed_service_ids.append(row.id)
+            if removed_service_ids:
+                removed_products = await session.execute(select(Product).where(
+                    Product.provider_service_ref_id.in_(removed_service_ids),
+                    Product.status == ProductStatus.ACTIVE,
+                ))
+                for product in removed_products.scalars().all():
+                    product.status = ProductStatus.INACTIVE
         provider.last_sync_at = datetime.utcnow()
         provider.last_error = None
         await session.commit()
@@ -775,10 +830,16 @@ async def sync_smm(session, provider: ApiProvider) -> StoreSyncReport:
         report.error = str(exc)[:200]
         provider.last_error = report.error
         await session.commit()
-    total = await session.execute(
-        select(ProviderService).where(ProviderService.api_provider_id == provider.id)
-    )
-    report.total_services = len(list(total.scalars().all()))
+    if catalog_loaded:
+        report.total_services = len(services)
+    else:
+        total = await session.execute(
+            select(ProviderService).where(
+                ProviderService.api_provider_id == provider.id,
+                ProviderService.status == ProviderServiceStatus.ACTIVE,
+            )
+        )
+        report.total_services = len(list(total.scalars().all()))
     provider.total_services = report.total_services
     await session.commit()
     return report
@@ -886,6 +947,8 @@ async def publish_product(
     margin_percent: Decimal | None = None,
     name_ar: str | None = None,
     min_quantity: int | None = None,
+    description: str | None = None,
+    sort_order: int = 0,
 ) -> Product:
     """ينشر خدمة مزود كمنتج قابل للشراء في فرع معين."""
     from services.dynamic_service import DynamicService
@@ -909,7 +972,7 @@ async def publish_product(
     sell = (cost * (Decimal("100") + margin) / Decimal("100"))
     # للفئات الثابتة (dropdown): السعر يُحسب عند اختيار الفئة — نخزن سعر الوحدة
     # الوصف: من المزود، أو مولّد من بيانات الخدمة (مهم لخدمات SMM بلا وصف)
-    desc = (ps.description or "").strip()
+    desc = (description or ps.description or "").strip()
     if not desc:
         bits = [ps.name]
         if ps.category:
@@ -933,6 +996,7 @@ async def publish_product(
         requires_player_id=requires_player,
         requires_link=requires_link,
         requires_quantity=requires_quantity and not extra.get("quantity_options"),
+        sort_order=sort_order,
     )
     if margin_percent is not None:
         product.profit_margin_percent = margin_percent
