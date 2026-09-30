@@ -130,6 +130,12 @@ class SupportTicketStatus(str, enum.Enum):
     CLOSED = "closed"
 
 
+class ProductGiftStatus(str, enum.Enum):
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    CANCELLED = "cancelled"
+
+
 class ProductRequestStatus(str, enum.Enum):
     OPEN = "open"
     IN_REVIEW = "in_review"
@@ -778,8 +784,15 @@ class SupportTicket(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    number_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("number_orders.id"), nullable=True, index=True
+    )
+    unified_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("unified_orders.id"), nullable=True, index=True
+    )
     subject: Mapped[str] = mapped_column(String(128))
     message: Mapped[str] = mapped_column(Text)
+    attachment_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[SupportTicketStatus] = mapped_column(
         SAEnum(SupportTicketStatus),
         default=SupportTicketStatus.OPEN,
@@ -1176,6 +1189,32 @@ class DigitalInventoryItem(Base):
     sold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     product: Mapped["Product"] = relationship(back_populates="inventory_items")
+
+
+class ProductGift(Base):
+    """منتج رقمي اشتراه مستخدم ليُستلم حصراً من حساب مستفيد محدد."""
+
+    __tablename__ = "product_gifts"
+    __table_args__ = (
+        UniqueConstraint("inventory_item_id", name="uq_product_gift_inventory_item"),
+        UniqueConstraint("unified_order_id", name="uq_product_gift_unified_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sender_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    recipient_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    inventory_item_id: Mapped[int] = mapped_column(ForeignKey("digital_inventory_items.id"))
+    unified_order_id: Mapped[int] = mapped_column(ForeignKey("unified_orders.id"))
+    status: Mapped[ProductGiftStatus] = mapped_column(
+        SAEnum(ProductGiftStatus), default=ProductGiftStatus.PENDING, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    sender: Mapped["User"] = relationship(foreign_keys=[sender_user_id])
+    recipient: Mapped["User"] = relationship(foreign_keys=[recipient_user_id])
+    product: Mapped["Product"] = relationship()
 
 
 class ProductWatch(Base):

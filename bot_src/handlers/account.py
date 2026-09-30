@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func, desc
 from sqlalchemy.orm import selectinload
-from database.models import User, NumberOrder, UnifiedOrder, DigitalInventoryItem, ProductReview, OrderStatus, UnifiedOrderStatus, ProductStatus
+from database.models import User, NumberOrder, UnifiedOrder, DigitalInventoryItem, ProductGift, ProductGiftStatus, ProductReview, OrderStatus, UnifiedOrderStatus, ProductStatus
 from services.balance_service import BalanceService
 from services.i18n_service import I18nService
 from services.cashback_service import CashbackService
@@ -31,6 +31,7 @@ def _account_kb(language: str='ar') -> InlineKeyboardBuilder:
     kb = InlineKeyboardBuilder()
     kb.button(text=t('acct_number_orders'), callback_data='my_num_orders:0', style="primary")
     kb.button(text=t('acct_other_orders'), callback_data='my_uni_orders:0', style="primary")
+    kb.button(text='🎁 هداياي', callback_data='gift:hub', style="primary")
     kb.button(text=t('acct_transactions'), callback_data='my_transactions:0', style="primary")
     kb.button(text=t('acct_watches'), callback_data='my_watches', style="primary")
     kb.button(text='💱 تحويل رصيد', callback_data='transfer:start', style="primary")
@@ -158,6 +159,11 @@ async def my_number_orders(callback: CallbackQuery, session, db_user: User):
             line += f'\n🔑 أكواد إضافية: <code>{o.extra_codes}</code>'
         lines.append(line)
     kb = InlineKeyboardBuilder()
+    for order in orders:
+        kb.button(
+            text=f"🛠 مشكلة في الطلب #{order.id}",
+            callback_data=f"support:order:number:{order.id}",
+        )
     if page > 0:
         kb.button(text='◀️ السابق', callback_data=f'my_num_orders:{page - 1}')
     if page < total_pages - 1:
@@ -216,15 +222,38 @@ async def unified_order_detail(callback: CallbackQuery, session, db_user: User):
     if order.remains is not None:
         text += f'\n⏳ المتبقي: {order.remains}'
     delivery_result = await session.execute(select(DigitalInventoryItem).where(DigitalInventoryItem.unified_order_id == order.id))
+    gift_result = await session.execute(
+        select(ProductGift)
+        .options(selectinload(ProductGift.recipient))
+        .where(ProductGift.unified_order_id == order.id)
+    )
+    product_gift = gift_result.scalar_one_or_none()
+    if product_gift is not None:
+        gift_state = {
+            ProductGiftStatus.PENDING: "بانتظار استلام المستفيد",
+            ProductGiftStatus.CLAIMED: "تم استلامها",
+            ProductGiftStatus.CANCELLED: "أُلغيت وأُعيد المبلغ",
+        }.get(product_gift.status, product_gift.status.value)
+        recipient_name = product_gift.recipient.full_name if product_gift.recipient else "المستفيد"
+        text += f"\n\n🎁 الهدية إلى: <b>{escape(recipient_name or 'المستفيد')}</b> · {gift_state}"
     delivery_item = delivery_result.scalar_one_or_none()
-    if delivery_item is not None:
+    if delivery_item is not None and product_gift is None:
         try:
             delivery_value = InventoryService.decrypt_value(delivery_item.encrypted_value)
             text += f'\n\n🎁 <b>بيانات التسليم:</b>\n<code>{escape(delivery_value)}</code>'
         except InventoryError:
             text += '\n\n⚠️ تعذر عرض بيانات التسليم حالياً.'
     kb = InlineKeyboardBuilder()
-    if order.status == UnifiedOrderStatus.COMPLETED and order.product_id is not None:
+    kb.button(
+        text='🛠 أواجه مشكلة في هذا الطلب',
+        callback_data=f'support:order:unified:{order.id}',
+        style="primary",
+    )
+    if (
+        order.status == UnifiedOrderStatus.COMPLETED
+        and order.product_id is not None
+        and product_gift is None
+    ):
         review_result = await session.execute(select(ProductReview).where(ProductReview.user_id == db_user.id, ProductReview.product_id == order.product_id))
         if review_result.scalar_one_or_none() is None:
             kb.button(text='⭐ قيّم هذا المنتج', callback_data=f'review:start:{order.id}')

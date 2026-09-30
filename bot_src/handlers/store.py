@@ -7,21 +7,24 @@
 """
 
 from decimal import Decimal
+from html import escape
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
+from sqlalchemy.orm import selectinload
 
-from database.models import ApiProvider, Category, CategoryType, Product, ProductStatus, ProviderService, SubCategory, UnifiedOrder
+from database.models import ApiProvider, Category, CategoryType, DigitalInventoryItem, InventoryItemStatus, Product, ProductGift, ProductGiftStatus, ProductStatus, ProviderService, SubCategory, UnifiedOrder, User
 from services.dynamic_service import DynamicService
+from services.inventory_service import InventoryError, InventoryService
 from services.store_order_service import (
     price_for,
     quantity_options_of,
     target_kind_of,
     validate_target,
 )
-from states.states import StoreStates
+from states.states import ProductGiftStates, StoreStates
 
 router = Router(name="store")
 
@@ -272,14 +275,424 @@ async def store_product(callback: CallbackQuery, session, db_user, state: FSMCon
     from handlers.watch import is_watching as _is_watching
 
     watching = await _is_watching(session, db_user.id, p.id)
-    await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    product_buttons = [
         [InlineKeyboardButton(text="🛒 شراء الآن", callback_data=f"store:buy:{p.id}", style="success")],
+    ]
+    from services.product_gift_service import ProductGiftService
+
+    if ProductGiftService.is_giftable(p):
+        product_buttons.append([
+            InlineKeyboardButton(text="🎁 إهداء هذا المنتج", callback_data=f"gift:create:{p.id}", style="primary")
+        ])
+    product_buttons.extend([
         [InlineKeyboardButton(
             text="🔕 إلغاء التنبيه" if watching else "🔔 نبهني عند تغير السعر",
             callback_data=f"watch:toggle:{p.id}")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"store:sub:{p.sub_category_id}")],
-    ]))
+    ])
+    await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=product_buttons))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("gift:create:"))
+async def product_gift_start(callback: CallbackQuery, state: FSMContext, session):
+    from services.product_gift_service import ProductGiftService
+
+    product_id = int(callback.data.rsplit(":", 1)[1])
+    product = await DynamicService.get_product(session, product_id)
+    if not product or product.status != ProductStatus.ACTIVE or not ProductGiftService.is_giftable(product):
+        await callback.answer("⚠️ يمكن إهداء الأكواد والاشتراكات الرقمية من المخزون فقط.", show_alert=True)
+        return
+    stock = await InventoryService.available_count(session, product_id)
+    if stock < 1:
+        await callback.answer("⚠️ لا يوجد مخزون متاح لهذا المنتج.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(gift_product_id=product_id)
+    await state.set_state(ProductGiftStates.waiting_recipient)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🎁 <b>إهداء {escape(product.name_ar)}</b>\n\n"
+        "أرسل اسم المستخدم في تيليجرام (مع أو بدون @) أو رقم تيليجرام للمستفيد.\n"
+        "يجب أن يكون لديه حساب مسجل في البوت.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ إلغاء", callback_data="gift:cancel_create")]
+        ]),
+    )
+
+
+@router.message(ProductGiftStates.waiting_recipient)
+async def product_gift_recipient_received(message: Message, state: FSMContext, session, db_user):
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer("⚠️ أرسل اسم المستخدم أو رقم تيليجرام.")
+        return
+
+    if raw.isdecimal():
+        recipient = (
+            await session.execute(select(User).where(User.telegram_id == int(raw)))
+        ).scalar_one_or_none()
+    else:
+        username = raw.lstrip("@").strip().casefold()
+        matches = list(
+            (
+                await session.execute(
+                    select(User).where(func.lower(User.username) == username).limit(2)
+                )
+            ).scalars().all()
+        )
+        recipient = matches[0] if len(matches) == 1 else None
+        if len(matches) > 1:
+            await message.answer("⚠️ اسم المستخدم غير فريد في قاعدة الحسابات. أرسل رقم تيليجرام بدلاً منه.")
+            return
+
+    if recipient is None:
+        await message.answer("⚠️ لم أجد حساباً مسجلاً بهذا الاسم أو الرقم. تحقق منه وحاول مجدداً.")
+        return
+    if recipient.id == db_user.id or recipient.is_banned:
+        await message.answer("⚠️ اختر مستفيداً آخر مسجلاً في البوت.")
+        return
+
+    data = await state.get_data()
+    product_id = int(data.get("gift_product_id", 0))
+    product = await DynamicService.get_product(session, product_id)
+    from services.product_gift_service import ProductGiftService
+
+    if not product or product.status != ProductStatus.ACTIVE or not ProductGiftService.is_giftable(product):
+        await state.clear()
+        await message.answer("⚠️ انتهت صلاحية المنتج. ابدأ من صفحة المنتج مجدداً.")
+        return
+    _cost, price, _margin = await price_for(session, product, "1", db_user)
+    await state.update_data(gift_recipient_id=recipient.id)
+    await state.set_state(ProductGiftStates.confirming_purchase)
+    recipient_name = recipient.full_name or (f"@{recipient.username}" if recipient.username else str(recipient.telegram_id))
+    await message.answer(
+        f"🎁 <b>تأكيد الهدية</b>\n\n"
+        f"📦 المنتج: <b>{escape(product.name_ar)}</b>\n"
+        f"👤 المستفيد: <b>{escape(recipient_name)}</b>\n"
+        f"💰 السعر: <b>{price}$</b>\n\n"
+        "سيُخصم المبلغ من رصيدك، ولا يظهر الكود إلا للمستفيد بعد استلامه.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ شراء وإرسال الهدية", callback_data="gift:confirm", style="success")],
+            [InlineKeyboardButton(text="❌ إلغاء", callback_data="gift:cancel_create")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "gift:cancel_create")
+async def product_gift_cancel_create(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer("تم إلغاء الإهداء.")
+    await callback.message.edit_text("تم إلغاء الإهداء. يمكنك الرجوع إلى المتجر.", reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🏠 المتجر", callback_data="store:home")]]
+    ))
+
+
+@router.callback_query(F.data == "gift:confirm", ProductGiftStates.confirming_purchase)
+async def product_gift_confirm(callback: CallbackQuery, state: FSMContext, session, db_user):
+    from services.product_gift_service import ProductGiftError, ProductGiftService
+
+    data = await state.get_data()
+    product_id = int(data.get("gift_product_id", 0))
+    recipient_id = int(data.get("gift_recipient_id", 0))
+    product = await DynamicService.get_product(session, product_id)
+    recipient = await session.get(User, recipient_id)
+    if not product or not recipient:
+        await state.clear()
+        await callback.answer("⚠️ انتهت صلاحية العملية. ابدأ من جديد.", show_alert=True)
+        return
+    _cost, price, _margin = await price_for(session, product, "1", db_user)
+    try:
+        gift, _order = await ProductGiftService.create(
+            session, db_user.id, recipient.id, product_id, price
+        )
+    except ProductGiftError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
+    await state.clear()
+    recipient_name = recipient.full_name or (f"@{recipient.username}" if recipient.username else str(recipient.telegram_id))
+    await callback.answer("تم شراء الهدية.")
+    await callback.message.edit_text(
+        f"✅ <b>تم شراء الهدية #{gift.id}</b>\n\n"
+        f"📦 {escape(product.name_ar)}\n"
+        f"👤 المستفيد: {escape(recipient_name)}\n"
+        f"💰 المبلغ: {price}$\n\n"
+        "أرسلنا إشعاراً للمستفيد إن كان البوت متاحاً لديه. يمكنك متابعة الهدية أو إلغاؤها قبل استلامها من قسم «هداياي» في حسابك.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 هداياي", callback_data="gift:hub")],
+            [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="back_to_main")],
+        ]),
+    )
+    try:
+        await callback.bot.send_message(
+            recipient.telegram_id,
+            f"🎁 <b>لديك هدية جديدة من {escape(db_user.full_name or 'أحد المستخدمين')}</b>\n\n"
+            f"📦 {escape(product.name_ar)}\nاضغط لعرضها واستلامها:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎁 عرض الهدية", callback_data=f"gift:view:{gift.id}")]
+            ]),
+        )
+    except Exception:
+        # المستفيد يستطيع فتح الهدية من حسابه حتى لو تعذر إرسال الرسالة الخاصة.
+        pass
+
+
+@router.callback_query(F.data == "gift:hub")
+async def product_gift_hub(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "🎁 <b>الهدايا الرقمية</b>\n\nاختر الهدايا الواردة إليك أو التي أرسلتها:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 الهدايا الواردة", callback_data="gift:inbox")],
+            [InlineKeyboardButton(text="📤 الهدايا المرسلة", callback_data="gift:sent")],
+            [InlineKeyboardButton(text="🔙 حسابي", callback_data="menu:account")],
+        ]),
+    )
+
+
+async def _render_product_gifts(callback: CallbackQuery, session, db_user, sent: bool):
+    query = select(ProductGift).options(
+        selectinload(ProductGift.product),
+        selectinload(ProductGift.sender),
+        selectinload(ProductGift.recipient),
+    )
+    if sent:
+        query = query.where(ProductGift.sender_user_id == db_user.id)
+    else:
+        query = query.where(ProductGift.recipient_user_id == db_user.id)
+    result = await session.execute(query.order_by(ProductGift.created_at.desc()).limit(30))
+    gifts = list(result.scalars().all())
+    title = "📤 <b>الهدايا التي أرسلتها</b>" if sent else "📥 <b>الهدايا الواردة</b>"
+    if not gifts:
+        await callback.answer()
+        await callback.message.edit_text(
+            f"{title}\n\nلا توجد هدايا هنا بعد.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 الهدايا", callback_data="gift:hub")]
+            ]),
+        )
+        return
+
+    labels = {
+        ProductGiftStatus.PENDING: "بانتظار الاستلام",
+        ProductGiftStatus.CLAIMED: "تم الاستلام",
+        ProductGiftStatus.CANCELLED: "ملغاة",
+    }
+    lines = [title, ""]
+    buttons = []
+    for gift in gifts:
+        product_name = gift.product.name_ar if gift.product else "منتج رقمي"
+        counterparty = gift.recipient if sent else gift.sender
+        counterparty_name = (
+            (counterparty.full_name or (f"@{counterparty.username}" if counterparty.username else "مستخدم"))
+            if counterparty
+            else "مستخدم"
+        )
+        lines.append(
+            f"🎁 #{gift.id} · {escape(product_name[:45])} · "
+            f"{labels.get(gift.status, gift.status.value)} · {escape(counterparty_name[:40])}"
+        )
+        buttons.append([
+            InlineKeyboardButton(text=f"عرض الهدية #{gift.id}", callback_data=f"gift:view:{gift.id}")
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="🔙 الهدايا", callback_data="gift:hub"),
+        InlineKeyboardButton(text="👤 حسابي", callback_data="menu:account"),
+    ])
+    await callback.answer()
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data == "gift:inbox")
+async def product_gift_inbox(callback: CallbackQuery, session, db_user):
+    await _render_product_gifts(callback, session, db_user, sent=False)
+
+
+@router.callback_query(F.data == "gift:sent")
+async def product_gift_sent(callback: CallbackQuery, session, db_user):
+    await _render_product_gifts(callback, session, db_user, sent=True)
+
+
+async def _get_product_gift(session, gift_id: int):
+    return (
+        await session.execute(
+            select(ProductGift)
+            .options(
+                selectinload(ProductGift.product),
+                selectinload(ProductGift.sender),
+                selectinload(ProductGift.recipient),
+            )
+            .where(ProductGift.id == gift_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _render_product_gift_detail(callback: CallbackQuery, session, gift, db_user):
+    is_sender = gift.sender_user_id == db_user.id
+    product_name = gift.product.name_ar if gift.product else "منتج رقمي"
+    status_label = {
+        ProductGiftStatus.PENDING: "🕒 بانتظار استلام المستفيد",
+        ProductGiftStatus.CLAIMED: "✅ تم استلام الهدية",
+        ProductGiftStatus.CANCELLED: "↩️ أُلغيت وأُعيد المبلغ",
+    }.get(gift.status, gift.status.value)
+    if is_sender:
+        recipient_name = (
+            gift.recipient.full_name
+            or (f"@{gift.recipient.username}" if gift.recipient.username else str(gift.recipient.telegram_id))
+        ) if gift.recipient else "المستفيد"
+        text = (
+            f"🎁 <b>الهدية #{gift.id}</b>\n\n"
+            f"📦 المنتج: <b>{escape(product_name)}</b>\n"
+            f"👤 المستفيد: <b>{escape(recipient_name)}</b>\n"
+            f"📊 الحالة: {status_label}\n"
+            "🔒 رمز المنتج لا يظهر إلا للمستفيد."
+        )
+        buttons = []
+        if gift.status == ProductGiftStatus.PENDING:
+            buttons.append([InlineKeyboardButton(
+                text="↩️ إلغاء الهدية واسترجاع المبلغ",
+                callback_data=f"gift:cancel_confirm:{gift.id}",
+            )])
+        buttons.append([InlineKeyboardButton(text="📤 هداياي المرسلة", callback_data="gift:sent")])
+    else:
+        sender_name = (
+            gift.sender.full_name
+            or (f"@{gift.sender.username}" if gift.sender.username else "أحد المستخدمين")
+        ) if gift.sender else "أحد المستخدمين"
+        text = (
+            f"🎁 <b>هدية #{gift.id}</b>\n\n"
+            f"📦 المنتج: <b>{escape(product_name)}</b>\n"
+            f"👤 من: <b>{escape(sender_name)}</b>\n"
+            f"📊 الحالة: {status_label}"
+        )
+        buttons = []
+        if gift.status == ProductGiftStatus.PENDING:
+            buttons.append([InlineKeyboardButton(
+                text="🎁 استلام الهدية",
+                callback_data=f"gift:claim:{gift.id}",
+                style="success",
+            )])
+        elif gift.status == ProductGiftStatus.CLAIMED:
+            buttons.append([InlineKeyboardButton(
+                text="📋 عرض الرمز الرقمي",
+                callback_data=f"gift:reveal:{gift.id}",
+            )])
+        if gift.status != ProductGiftStatus.CANCELLED:
+            buttons.append([InlineKeyboardButton(
+                text="🛠 أواجه مشكلة في الهدية",
+                callback_data=f"support:order:unified:{gift.unified_order_id}",
+            )])
+        buttons.append([InlineKeyboardButton(text="📥 هداياي الواردة", callback_data="gift:inbox")])
+    buttons.append([InlineKeyboardButton(text="🔙 الهدايا", callback_data="gift:hub")])
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+async def _send_product_gift_value(callback: CallbackQuery, session, gift):
+    item = await session.get(DigitalInventoryItem, gift.inventory_item_id)
+    if item is None:
+        await callback.message.answer("⚠️ تعذر العثور على رمز الهدية. أبلغ الدعم برقمها.")
+        return
+    try:
+        value = InventoryService.decrypt_value(item.encrypted_value)
+    except InventoryError:
+        await callback.message.answer("⚠️ تعذر عرض الرمز الآن. أبلغ الدعم برقم الهدية.")
+        return
+    await callback.message.answer(
+        f"🎁 رمز الهدية #{gift.id}:\n\n{value}",
+        parse_mode=None,
+    )
+
+
+@router.callback_query(F.data.startswith("gift:view:"))
+async def product_gift_view(callback: CallbackQuery, session, db_user):
+    try:
+        gift_id = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer("⚠️ رقم الهدية غير صالح.", show_alert=True)
+        return
+    gift = await _get_product_gift(session, gift_id)
+    if gift is None or db_user.id not in (gift.sender_user_id, gift.recipient_user_id):
+        await callback.answer("⚠️ الهدية غير موجودة لهذا الحساب.", show_alert=True)
+        return
+    await callback.answer()
+    await _render_product_gift_detail(callback, session, gift, db_user)
+
+
+@router.callback_query(F.data.startswith("gift:claim:"))
+async def product_gift_claim(callback: CallbackQuery, session, db_user):
+    from services.product_gift_service import ProductGiftError, ProductGiftService
+
+    try:
+        gift_id = int(callback.data.rsplit(":", 1)[1])
+        gift = await ProductGiftService.claim(session, gift_id, db_user.id)
+    except (ValueError, ProductGiftError) as exc:
+        await callback.answer(str(exc) or "⚠️ الهدية غير متاحة.", show_alert=True)
+        return
+    gift = await _get_product_gift(session, gift.id)
+    await callback.answer("تم استلام الهدية.")
+    await _render_product_gift_detail(callback, session, gift, db_user)
+    await _send_product_gift_value(callback, session, gift)
+
+
+@router.callback_query(F.data.startswith("gift:reveal:"))
+async def product_gift_reveal(callback: CallbackQuery, session, db_user):
+    try:
+        gift_id = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer("⚠️ رقم الهدية غير صالح.", show_alert=True)
+        return
+    gift = await _get_product_gift(session, gift_id)
+    if (
+        gift is None
+        or gift.recipient_user_id != db_user.id
+        or gift.status != ProductGiftStatus.CLAIMED
+    ):
+        await callback.answer("⚠️ الرمز متاح للمستفيد بعد استلام الهدية فقط.", show_alert=True)
+        return
+    await callback.answer()
+    await _send_product_gift_value(callback, session, gift)
+
+
+@router.callback_query(F.data.startswith("gift:cancel_confirm:"))
+async def product_gift_cancel_confirm(callback: CallbackQuery, session, db_user):
+    from database.models import UnifiedOrder
+
+    gift_id = int(callback.data.rsplit(":", 1)[1])
+    gift = await _get_product_gift(session, gift_id)
+    if gift is None or gift.sender_user_id != db_user.id or gift.status != ProductGiftStatus.PENDING:
+        await callback.answer("⚠️ يمكن إلغاء هدية معلّقة أرسلتها أنت فقط.", show_alert=True)
+        return
+    order = await session.get(UnifiedOrder, gift.unified_order_id)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"هل تريد إلغاء الهدية #{gift.id}؟ سيُعاد مبلغ {order.price_usd if order else '—'}$ إلى رصيدك ويعود المنتج إلى المخزون.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ نعم، ألغِ الهدية", callback_data=f"gift:cancel:{gift.id}", style="danger")],
+            [InlineKeyboardButton(text="↩️ تراجع", callback_data=f"gift:view:{gift.id}")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("gift:cancel:"))
+async def product_gift_cancel(callback: CallbackQuery, session, db_user):
+    from services.product_gift_service import ProductGiftError, ProductGiftService
+
+    try:
+        gift_id = int(callback.data.rsplit(":", 1)[1])
+        await ProductGiftService.cancel(session, gift_id, db_user.id)
+    except (ValueError, ProductGiftError) as exc:
+        await callback.answer(str(exc) or "⚠️ تعذر إلغاء الهدية.", show_alert=True)
+        return
+    gift = await _get_product_gift(session, gift_id)
+    await callback.answer("أُلغيت الهدية وأُعيد المبلغ.")
+    await _render_product_gift_detail(callback, session, gift, db_user)
 
 
 @router.callback_query(F.data.startswith("store:buy:"))
