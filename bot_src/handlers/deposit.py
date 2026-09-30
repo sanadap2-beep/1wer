@@ -15,7 +15,6 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery
 from sqlalchemy import select
-from config import settings
 from database.models import DepositRequest, DepositStatus, User, TransactionType
 from services.settings_service import SettingsService
 from services.balance_service import BalanceService
@@ -69,13 +68,13 @@ async def deposit_start_cb(callback: CallbackQuery, state: FSMContext, db_user=N
 
 async def _show_deposit_methods(target, db_user=None):
     """يعرض قائمة طرق الدفع الست بلغة المستخدم."""
-    shamcash_manual = await SettingsService.get_bool('payment_shamcash_manual_enabled', True) and bool(settings.SHAMCASH_MANUAL_ADDRESS)
-    stars = await SettingsService.get_bool('payment_stars_enabled', True)
-    usdt_manual = await SettingsService.get_bool('payment_usdt_manual_enabled', True) and any((settings.USDT_TRC20_ADDRESS, settings.USDT_ERC20_ADDRESS, settings.USDT_BEP20_ADDRESS))
-    shamcash_auto = await SettingsService.get_bool('payment_shamcash_auto_enabled', True) and bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS)
-    usdt_auto = await SettingsService.get_bool('payment_usdt_auto_enabled', True) and bool(settings.PLISIO_SECRET_KEY)
+    shamcash_manual = await payment_method_enabled("shamcash_manual")
+    stars = await payment_method_enabled("stars")
+    usdt_manual = await payment_method_enabled("usdt_manual")
+    shamcash_auto = await payment_method_enabled("shamcash_auto")
+    usdt_auto = await payment_method_enabled("usdt_auto")
     mobile_credit = await payment_method_enabled("mobile_credit")
-    other = await SettingsService.get_bool('payment_other_enabled', True)
+    other = await payment_method_enabled("other")
     language = getattr(db_user, 'language_code', 'ar') or 'ar'
     text = I18nService.t('deposit_title', language)
     kb = deposit_menu_kb(shamcash_manual_enabled=shamcash_manual, stars_enabled=stars, usdt_manual_enabled=usdt_manual, shamcash_auto_enabled=shamcash_auto, usdt_auto_enabled=usdt_auto, mobile_credit_enabled=mobile_credit, other_enabled=other, language=language)
