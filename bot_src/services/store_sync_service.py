@@ -60,6 +60,7 @@ async def hide_unwanted_store_categories(session) -> int:
 
 _HYPER_TYPE_KEYWORDS: list[tuple[str, CategoryType, str]] = [
     ("العاب", CategoryType.GAMES, "🎮"),
+    ("game", CategoryType.GAMES, "🎮"),
     ("games", CategoryType.GAMES, "🎮"),
     ("تطبيقات", CategoryType.APPS, "📱"),
     ("apps", CategoryType.APPS, "📱"),
@@ -79,8 +80,10 @@ _HYPER_TYPE_KEYWORDS: list[tuple[str, CategoryType, str]] = [
 def hyper_category_type(name: str) -> tuple[CategoryType, str]:
     """(النوع، الإيموجي) لقسم HyperStore حسب اسمه العربي."""
     lowered = (name or "").strip().lower()
+    alef_map = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا"})
+    lowered = lowered.translate(alef_map)
     for keyword, ctype, emoji in _HYPER_TYPE_KEYWORDS:
-        if keyword in lowered:
+        if keyword.translate(alef_map) in lowered:
             return ctype, emoji
     return CategoryType.CUSTOM, "🛍"
 
@@ -518,16 +521,39 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
                 cat = None
                 if mapped and mapped.get("kind") == "cat":
                     cat = await session.get(Category, int(mapped["id"]))
+                    if cat is not None and cat.type != ctype:
+                        cat = None
+                fixed = SECTION_ROOT_NAMES.get(ctype)
                 if cat is None:
-                    # بحث بالاسم لتفادي التكرار
+                    # أعد استخدام الجذر المحلي الصحيح حتى لو تغيّر معرّف شجرة المزود.
+                    if fixed:
+                        existing = await session.execute(
+                            select(Category).where(
+                                Category.type == ctype,
+                                Category.name_ar == fixed[0],
+                            )
+                        )
+                        cat = existing.scalars().first()
+                if cat is None:
                     existing = await session.execute(
-                        select(Category).where(Category.name_ar == name[:64])
+                        select(Category).where(
+                            Category.type == ctype,
+                            Category.name_ar == name[:64],
+                        )
                     )
-                    cat = existing.scalar_one_or_none()
+                    cat = existing.scalars().first()
+                if cat is None:
+                    existing = await session.execute(
+                        select(Category)
+                        .where(Category.type == ctype)
+                        .order_by(Category.id)
+                    )
+                    typed_roots = list(existing.scalars().all())
+                    if len(typed_roots) == 1:
+                        cat = typed_roots[0]
                 if cat is None:
                     from services.dynamic_service import DynamicService
 
-                    fixed = SECTION_ROOT_NAMES.get(ctype)
                     cat = await DynamicService.create_category(
                         session, name_ar=fixed[0] if fixed else name[:64],
                         emoji=fixed[1] if fixed else emoji,
@@ -553,21 +579,43 @@ async def sync_hyperstore(session, provider: ApiProvider) -> StoreSyncReport:
                         await _store_hyper_product(session, provider, protocol, p, general.id, report, hyper_cat_ext=ext_id)
             else:
                 # قسم فرعي → SubCategory
+                parent_cat = local_parent_cat
+                if parent_cat is None and local_parent_sub is not None:
+                    parent_row = await session.get(SubCategory, local_parent_sub)
+                    parent_cat = parent_row.category_id if parent_row else None
+                if parent_cat is None:
+                    report.failed += 1
+                    continue
+
                 mapped = tree_map.get(ext_id)
                 sub = None
                 if mapped and mapped.get("kind") == "sub":
                     sub = await session.get(SubCategory, int(mapped["id"]))
+                    if (
+                        sub is not None
+                        and (
+                            sub.category_id != parent_cat
+                            or sub.parent_sub_category_id != local_parent_sub
+                        )
+                    ):
+                        sub = None
+                localized_name = localize_title(name)
+                if sub is None:
+                    existing = await session.execute(
+                        select(SubCategory).where(
+                            SubCategory.category_id == parent_cat,
+                            SubCategory.parent_sub_category_id == local_parent_sub,
+                            SubCategory.name_ar == localized_name,
+                        )
+                    )
+                    sub = existing.scalars().first()
                 if sub is None:
                     from services.dynamic_service import DynamicService
 
-                    parent_cat = local_parent_cat
-                    if parent_cat is None and local_parent_sub is not None:
-                        parent_row = await session.get(SubCategory, local_parent_sub)
-                        parent_cat = parent_row.category_id if parent_row else None
                     # الاسم معرّب عند الإنشاء
                     sub = await DynamicService.create_sub_category(
-                        session, category_id=int(parent_cat or 0),
-                        name_ar=localize_title(name), emoji="📁",
+                        session, category_id=parent_cat,
+                        name_ar=localized_name, emoji="📁",
                         parent_sub_category_id=local_parent_sub,
                         sort_order=order,
                     )
